@@ -10,19 +10,22 @@ builds:
       - darwin
       - linux
       - windows
+    ldflags:
+      - "-s"
+      - "-w"
+      - "-X github.com/fmotalleb/go-tools/git.Version={{.Version}}"
+      - "-X github.com/fmotalleb/go-tools/git.Commit={{.ShortCommit}}"
+      - "-X github.com/fmotalleb/go-tools/git.Date={{.Date}}"
+      - "-X github.com/fmotalleb/go-tools/git.Branch={{.Branch}}"
     goarch:
       - amd64
-archives:
-  - format_overrides:
-      - goos: windows
-        formats: 
-          - zip
+
 dockers:
   - image_templates:
-    - "ghcr.io/golang-templates/seed:latest"
-    - "ghcr.io/golang-templates/seed:{{ .Major }}"
-    - "ghcr.io/golang-templates/seed:{{ .Major }}.{{ .Minor }}"
-    - "ghcr.io/golang-templates/seed:{{ .Major }}.{{ .Minor }}.{{ .Patch }}"
+    - "ghcr.io/fmotalleb/bifrost:latest"
+    - "ghcr.io/fmotalleb/bifrost:{{ .Major }}"
+    - "ghcr.io/fmotalleb/bifrost:{{ .Major }}.{{ .Minor }}"
+    - "ghcr.io/fmotalleb/bifrost:{{ .Major }}.{{ .Minor }}.{{ .Patch }}"
     build_flag_templates:
     - "--pull"
     # OCI annotations: https://github.com/opencontainers/image-spec/blob/main/annotations.md
@@ -33,6 +36,8 @@ dockers:
     - "--label=org.opencontainers.image.source={{.GitURL}}"
 release:
   github:
+    name: bifrost
+    owner: fmotalleb
   name_template: "{{.Version}}"
   prerelease: auto
   mode: append
