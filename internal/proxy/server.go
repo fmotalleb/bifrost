@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"sync"
 	"sync/atomic"
 
 	"github.com/fmotalleb/go-tools/log"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/fmotalleb/bifrost/config"
 )
@@ -108,34 +108,71 @@ func (s *Server) handleConnection(ctx context.Context, id uint64, clientConn net
 		zap.String("upstream", s.cfg.Server.String()),
 	)
 
-	pipeBothWays(clientConn, upstreamConn)
+	if proxyErr := pipeBothWays(clientConn, upstreamConn); proxyErr != nil {
+		fields := []zap.Field{
+			zap.Uint64("connection_id", id),
+			zap.String("client", clientConn.RemoteAddr().String()),
+			zap.String("upstream", s.cfg.Server.String()),
+			zap.Error(proxyErr),
+		}
+		if isHotPathConnectionError(proxyErr) {
+			logger.Debug("proxy stream closed with expected network error", fields...)
+			return
+		}
+		logger.Warn("proxy stream failed", fields...)
+	}
 }
 
-func pipeBothWays(clientConn, upstreamConn net.Conn) {
-	var wg sync.WaitGroup
-	wg.Add(2)
+func pipeBothWays(clientConn, upstreamConn net.Conn) error {
+	group := new(errgroup.Group)
 
-	go func() {
-		defer wg.Done()
-		_, _ = io.Copy(upstreamConn, clientConn)
-		closeWrite(upstreamConn)
-	}()
+	group.Go(func() error {
+		return copyAndCloseWrite(upstreamConn, clientConn, "client_to_upstream")
+	})
 
-	go func() {
-		defer wg.Done()
-		_, _ = io.Copy(clientConn, upstreamConn)
-		closeWrite(clientConn)
-	}()
+	group.Go(func() error {
+		return copyAndCloseWrite(clientConn, upstreamConn, "upstream_to_client")
+	})
 
-	wg.Wait()
+	return group.Wait()
 }
 
-func closeWrite(conn net.Conn) {
-	tcpConn, ok := conn.(*net.TCPConn)
-	if !ok {
-		_ = conn.Close()
-		return
+func copyAndCloseWrite(dst, src net.Conn, direction string) error {
+	if _, err := io.Copy(dst, src); err != nil {
+		return fmt.Errorf("%s: copy: %w", direction, err)
 	}
 
-	_ = tcpConn.CloseWrite()
+	if err := closeWrite(dst); err != nil {
+		return fmt.Errorf("%s: close write: %w", direction, err)
+	}
+
+	return nil
+}
+
+func closeWrite(conn net.Conn) error {
+	tcpConn, ok := conn.(*net.TCPConn)
+	if !ok {
+		return conn.Close()
+	}
+
+	return tcpConn.CloseWrite()
+}
+
+func isHotPathConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
+		return true
+	}
+
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		switch opErr.Op {
+		case "read", "write", "close":
+			return true
+		}
+	}
+
+	return false
 }
