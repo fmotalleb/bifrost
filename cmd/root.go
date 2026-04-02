@@ -19,6 +19,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/fmotalleb/bifrost/config"
+	"github.com/fmotalleb/bifrost/internal/proxy"
 )
 
 var (
@@ -64,10 +66,15 @@ var rootCmd = &cobra.Command{
 				if pErr := config.Parse(ctx, &cfg, configFile); pErr != nil {
 					return pErr
 				}
-				// if sErr := server.Serve(ctx, cfg); sErr != nil {
-				// 	return sErr
-				// }
-				return nil
+				if vErr := cfg.Validate(); vErr != nil {
+					return fmt.Errorf("validate config: %w", vErr)
+				}
+				srv, sErr := proxy.NewServer(cfg)
+				if sErr != nil {
+					return fmt.Errorf("create server: %w", sErr)
+				}
+
+				return srv.Serve(ctx)
 			},
 			time.Minute,
 		)
