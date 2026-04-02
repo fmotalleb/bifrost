@@ -50,27 +50,41 @@ Example configuration:
 listen: 127.0.0.1:8080
 server: 94.93.92.91:8080
 
+cache:
+  ttl: 30s
+  prefetch: false
+
 ifaces:
   eth0:
     weight: 2
+    # optional: force source IP instead of resolving from interface
+    # source_ip: 192.168.1.10
   eth1:
     weight: 5
+    # source_ip: 10.0.0.22
 ```
 
 ### Fields
 
 * listen: local address to accept incoming connections
 * server: upstream target address
+* cache.ttl: TTL for interface IP lookup cache (for example: `30s`, `5m`, `0s`)
+* cache.prefetch: when `true`, resolve interface IPs at startup and keep them permanently (no per-connection lookup)
 * ifaces: map of network interfaces
 
 Each interface:
 
-* weight: relative selection weight (default can be 1 if omitted)
+* weight: relative selection weight
+* source_ip (optional): static bind IP for that interface; if set, Bifrost uses it directly
 
 ## Behavior
 
 * Each new connection is assigned an interface
+* Interface selection is weighted and per-connection
 * Traffic flows entirely through that interface
+* If `source_ip` is set for the selected interface, that IP is used for outbound bind
+* Otherwise, bind IP is resolved from the interface and cached according to `cache.ttl`
+* With `cache.prefetch: true`, bind IPs are prefetched once at startup and reused
 * No packet-level balancing
 * No kernel bonding required
 
@@ -97,7 +111,7 @@ Traffic will be distributed across eth0 and eth1 according to weights.
 ## Future Improvements
 
 * Interface health monitoring
-* Dynamic weight adjustment
+* Dynamic weight adjustment (reputation)
 * Failover handling
 * Metrics and observability (Prometheus)
 * UDP support
