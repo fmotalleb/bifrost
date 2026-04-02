@@ -3,13 +3,31 @@ package proxy
 import (
 	"fmt"
 	"net"
+	"strings"
 )
 
 // ResolveBindIP resolves a usable source IP for the given interface.
 func ResolveBindIP(interfaceName string, preferIPv4 bool) (net.IP, error) {
-	iface, err := net.InterfaceByName(interfaceName)
+	iface, err := resolveInterfaceByName(interfaceName)
 	if err != nil {
-		return nil, fmt.Errorf("find interface %q: %w", interfaceName, err)
+		return nil, err
+	}
+	return resolveBindIPFromInterface(iface, interfaceName, preferIPv4)
+}
+
+// ResolveBindIPByIndex resolves a usable source IP for the given interface index.
+func ResolveBindIPByIndex(interfaceIndex int, preferIPv4 bool) (net.IP, error) {
+	iface, err := net.InterfaceByIndex(interfaceIndex)
+	if err != nil {
+		return nil, fmt.Errorf("find interface by index %d: %w", interfaceIndex, err)
+	}
+
+	return resolveBindIPFromInterface(iface, iface.Name, preferIPv4)
+}
+
+func resolveBindIPFromInterface(iface *net.Interface, interfaceName string, preferIPv4 bool) (net.IP, error) {
+	if iface == nil {
+		return nil, fmt.Errorf("interface %q is nil", interfaceName)
 	}
 
 	addrs, err := iface.Addrs()
@@ -75,4 +93,59 @@ func ipFromAddr(addr net.Addr) net.IP {
 	default:
 		return nil
 	}
+}
+
+// ResolveInterfaceName resolves a configured interface name to the exact OS interface name.
+func ResolveInterfaceName(interfaceName string) (string, error) {
+	iface, err := resolveInterfaceByName(interfaceName)
+	if err != nil {
+		return "", err
+	}
+
+	return iface.Name, nil
+}
+
+// ResolveInterface resolves a configured interface name to an OS interface.
+func ResolveInterface(interfaceName string) (*net.Interface, error) {
+	return resolveInterfaceByName(interfaceName)
+}
+
+func resolveInterfaceByName(interfaceName string) (*net.Interface, error) {
+	target := normalizeIfaceName(interfaceName)
+	if target == "" {
+		return nil, fmt.Errorf("interface name cannot be empty")
+	}
+
+	iface, err := net.InterfaceByName(target)
+	if err == nil {
+		return iface, nil
+	}
+
+	ifaces, listErr := net.Interfaces()
+	if listErr != nil {
+		return nil, fmt.Errorf("find interface %q: %w", interfaceName, err)
+	}
+
+	for idx := range ifaces {
+		if strings.EqualFold(ifaces[idx].Name, target) {
+			return &ifaces[idx], nil
+		}
+	}
+
+	availableNames := make([]string, 0, len(ifaces))
+	for _, available := range ifaces {
+		availableNames = append(availableNames, available.Name)
+	}
+
+	return nil, fmt.Errorf(
+		"find interface %q: %w (available: %s)",
+		interfaceName,
+		err,
+		strings.Join(availableNames, ", "),
+	)
+}
+
+func normalizeIfaceName(interfaceName string) string {
+	parts := strings.Fields(interfaceName)
+	return strings.Join(parts, " ")
 }

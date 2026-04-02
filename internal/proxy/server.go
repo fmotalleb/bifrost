@@ -15,21 +15,60 @@ import (
 	"github.com/fmotalleb/bifrost/config"
 )
 
+var errStreamAborted = errors.New("proxy stream aborted")
+
 // Server is a TCP reverse proxy that binds each upstream connection to a selected interface.
 type Server struct {
-	cfg      config.Config
-	selector *Selector
-	connID   atomic.Uint64
+	cfg              config.Config
+	selector         *Selector
+	ifaceIndexByName map[string]int
+	connID           atomic.Uint64
 }
 
 // NewServer constructs a proxy server from config.
 func NewServer(cfg config.Config) (*Server, error) {
+	normalizedIFaces, ifaceIndexes, err := normalizeConfiguredIFaces(cfg.IFaces)
+	if err != nil {
+		return nil, fmt.Errorf("normalize interfaces: %w", err)
+	}
+	cfg.IFaces = normalizedIFaces
+
 	selector, err := NewSelector(cfg.IFaces)
 	if err != nil {
 		return nil, err
 	}
 
-	return &Server{cfg: cfg, selector: selector}, nil
+	return &Server{
+		cfg:              cfg,
+		selector:         selector,
+		ifaceIndexByName: ifaceIndexes,
+	}, nil
+}
+
+func normalizeConfiguredIFaces(
+	ifaces map[string]config.Iface,
+) (map[string]config.Iface, map[string]int, error) {
+	normalized := make(map[string]config.Iface, len(ifaces))
+	indexes := make(map[string]int, len(ifaces))
+	for configuredName, ifaceCfg := range ifaces {
+		resolvedIface, err := ResolveInterface(configuredName)
+		if err != nil {
+			return nil, nil, err
+		}
+		resolvedName := resolvedIface.Name
+
+		if _, exists := normalized[resolvedName]; exists {
+			return nil, nil, fmt.Errorf(
+				"configured interfaces resolve to the same OS interface %q",
+				resolvedName,
+			)
+		}
+
+		normalized[resolvedName] = ifaceCfg
+		indexes[resolvedName] = resolvedIface.Index
+	}
+
+	return normalized, indexes, nil
 }
 
 // Serve starts listening and blocks until context cancellation or fatal listener failure.
@@ -77,11 +116,21 @@ func (s *Server) handleConnection(ctx context.Context, id uint64, clientConn net
 		return
 	}
 
-	bindIP, err := ResolveBindIP(ifaceName, s.cfg.Server.Addr().Is4())
+	ifaceIndex, ok := s.ifaceIndexByName[ifaceName]
+	if !ok {
+		logger.Warn("missing cached interface index",
+			zap.Uint64("connection_id", id),
+			zap.String("iface", ifaceName),
+		)
+		return
+	}
+
+	bindIP, err := ResolveBindIPByIndex(ifaceIndex, s.cfg.Server.Addr().Is4())
 	if err != nil {
 		logger.Warn("failed to resolve interface ip",
 			zap.Uint64("connection_id", id),
 			zap.String("iface", ifaceName),
+			zap.Int("iface_index", ifaceIndex),
 			zap.Error(err),
 		)
 		return
@@ -93,6 +142,7 @@ func (s *Server) handleConnection(ctx context.Context, id uint64, clientConn net
 		logger.Warn("failed to dial upstream",
 			zap.Uint64("connection_id", id),
 			zap.String("iface", ifaceName),
+			zap.Int("iface_index", ifaceIndex),
 			zap.String("bind_ip", bindIP.String()),
 			zap.Error(err),
 		)
@@ -104,6 +154,7 @@ func (s *Server) handleConnection(ctx context.Context, id uint64, clientConn net
 		zap.Uint64("connection_id", id),
 		zap.String("client", clientConn.RemoteAddr().String()),
 		zap.String("iface", ifaceName),
+		zap.Int("iface_index", ifaceIndex),
 		zap.String("bind_ip", bindIP.String()),
 		zap.String("upstream", s.cfg.Server.String()),
 	)
@@ -125,28 +176,69 @@ func (s *Server) handleConnection(ctx context.Context, id uint64, clientConn net
 
 func pipeBothWays(clientConn, upstreamConn net.Conn) error {
 	group := new(errgroup.Group)
+	results := make(chan streamCopyResult, 2)
 
 	group.Go(func() error {
-		return copyAndCloseWrite(upstreamConn, clientConn, "client_to_upstream")
+		results <- copyAndCloseWrite(upstreamConn, clientConn, "client_to_upstream")
+		return nil
 	})
 
 	group.Go(func() error {
-		return copyAndCloseWrite(clientConn, upstreamConn, "upstream_to_client")
+		results <- copyAndCloseWrite(clientConn, upstreamConn, "upstream_to_client")
+		return nil
 	})
 
-	return group.Wait()
-}
+	_ = group.Wait()
+	close(results)
 
-func copyAndCloseWrite(dst, src net.Conn, direction string) error {
-	if _, err := io.Copy(dst, src); err != nil {
-		return fmt.Errorf("%s: copy: %w", direction, err)
+	var aborted bool
+	unexpected := make([]error, 0, 2)
+	for result := range results {
+		if result.aborted {
+			aborted = true
+		}
+		if result.err != nil {
+			unexpected = append(unexpected, result.err)
+		}
 	}
 
-	if err := closeWrite(dst); err != nil {
-		return fmt.Errorf("%s: close write: %w", direction, err)
+	if len(unexpected) > 0 {
+		return errors.Join(unexpected...)
+	}
+	if aborted {
+		return errStreamAborted
 	}
 
 	return nil
+}
+
+type streamCopyResult struct {
+	aborted bool
+	err     error
+}
+
+func copyAndCloseWrite(dst, src net.Conn, direction string) streamCopyResult {
+	result := streamCopyResult{}
+
+	if _, err := io.Copy(dst, src); err != nil {
+		if isHotPathConnectionError(err) {
+			result.aborted = true
+		} else {
+			result.err = fmt.Errorf("%s: copy: %w", direction, err)
+		}
+	}
+
+	if err := closeWrite(dst); err != nil {
+		if isHotPathConnectionError(err) {
+			result.aborted = true
+		} else if result.err == nil {
+			result.err = fmt.Errorf("%s: close write: %w", direction, err)
+		} else {
+			result.err = errors.Join(result.err, fmt.Errorf("%s: close write: %w", direction, err))
+		}
+	}
+
+	return result
 }
 
 func closeWrite(conn net.Conn) error {
@@ -161,6 +253,9 @@ func closeWrite(conn net.Conn) error {
 func isHotPathConnectionError(err error) bool {
 	if err == nil {
 		return false
+	}
+	if errors.Is(err, errStreamAborted) {
+		return true
 	}
 	if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
 		return true
