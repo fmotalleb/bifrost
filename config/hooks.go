@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/fmotalleb/go-tools/decoder/hooks"
 	"github.com/go-viper/mapstructure/v2"
@@ -18,6 +19,7 @@ func init() {
 	hooks.RegisterHook(StringToNetAddrPortHook())
 	hooks.RegisterHook(StringToNetAddrHook())
 	hooks.RegisterHook(IntToNetAddrPortHook())
+	hooks.RegisterHook(StringToDurationHook())
 }
 
 // StringToNetAddrPortHook returns a mapstructure.DecodeHookFunc that converts string values into netip.AddrPort.
@@ -104,5 +106,31 @@ func IntToNetAddrPortHook() mapstructure.DecodeHookFunc {
 			return nil, err
 		}
 		return addrPort, nil
+	}
+}
+
+// StringToDurationHook returns a mapstructure.DecodeHookFunc that converts string values into time.Duration.
+func StringToDurationHook() mapstructure.DecodeHookFunc {
+	return func(f reflect.Type, t reflect.Type, val interface{}) (interface{}, error) {
+		if f.Kind() != reflect.String {
+			return val, nil
+		}
+		if t != reflect.TypeOf(time.Duration(0)) {
+			return val, nil
+		}
+
+		str, ok := val.(string)
+		if !ok {
+			return val, errors.New("expected string value for time.Duration")
+		}
+		if str == "" {
+			return time.Duration(0), nil
+		}
+
+		parsed, err := time.ParseDuration(str)
+		if err != nil {
+			return nil, fmt.Errorf("parse duration %q: %w", str, err)
+		}
+		return parsed, nil
 	}
 }

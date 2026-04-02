@@ -14,6 +14,10 @@ func (c Config) Validate() error {
 		return fmt.Errorf("server must be a valid address:port")
 	}
 
+	if c.Cache.TTL < 0 {
+		return fmt.Errorf("cache.ttl must be zero or greater")
+	}
+
 	if len(c.IFaces) == 0 {
 		return fmt.Errorf("ifaces must contain at least one interface")
 	}
@@ -25,6 +29,18 @@ func (c Config) Validate() error {
 
 		if iface.Weight <= 0 {
 			return fmt.Errorf("interface %q must have weight greater than 0", name)
+		}
+
+		if iface.SourceIP != nil {
+			if iface.SourceIP.IsUnspecified() {
+				return fmt.Errorf("interface %q source_ip cannot be unspecified", name)
+			}
+			if iface.SourceIP.IsLoopback() {
+				return fmt.Errorf("interface %q source_ip cannot be loopback", name)
+			}
+			if !iface.SourceIP.IsGlobalUnicast() {
+				return fmt.Errorf("interface %q source_ip must be a unicast address", name)
+			}
 		}
 	}
 

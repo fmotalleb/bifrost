@@ -1,8 +1,17 @@
 listen: 127.0.0.1:8060
 server: 192.168.1.2:8060
 
+cache:
+  # TTL for interface IP lookups (ignored when prefetch=true)
+  ttl: 30s
+  # When true, resolve interface IPs once at startup and keep them permanently
+  prefetch: false
+
 ifaces:
   Ethernet:
     weight: 1
+    # Optional static source IP. If set, bifrost won't resolve IP from interface.
+    # source_ip: 192.168.1.10
   "Ethernet 2":
     weight: 1
+    # source_ip: 10.217.4.156

@@ -19,19 +19,26 @@ var errStreamAborted = errors.New("proxy stream aborted")
 
 // Server is a TCP reverse proxy that binds each upstream connection to a selected interface.
 type Server struct {
-	cfg              config.Config
-	selector         *Selector
-	ifaceIndexByName map[string]int
-	connID           atomic.Uint64
+	cfg           config.Config
+	selector      *Selector
+	ifaceBindings map[string]ifaceBinding
+	ipCache       *IPCache
+	connID        atomic.Uint64
 }
 
 // NewServer constructs a proxy server from config.
 func NewServer(cfg config.Config) (*Server, error) {
-	normalizedIFaces, ifaceIndexes, err := normalizeConfiguredIFaces(cfg.IFaces)
+	preferIPv4 := cfg.Server.Addr().Is4()
+	normalizedIFaces, bindings, err := normalizeConfiguredIFaces(cfg.IFaces, preferIPv4)
 	if err != nil {
 		return nil, fmt.Errorf("normalize interfaces: %w", err)
 	}
 	cfg.IFaces = normalizedIFaces
+
+	cache, err := NewIPCache(cfg.Cache.TTL, cfg.Cache.Prefetch, bindings, preferIPv4)
+	if err != nil {
+		return nil, fmt.Errorf("create ip cache: %w", err)
+	}
 
 	selector, err := NewSelector(cfg.IFaces)
 	if err != nil {
@@ -39,17 +46,19 @@ func NewServer(cfg config.Config) (*Server, error) {
 	}
 
 	return &Server{
-		cfg:              cfg,
-		selector:         selector,
-		ifaceIndexByName: ifaceIndexes,
+		cfg:           cfg,
+		selector:      selector,
+		ifaceBindings: bindings,
+		ipCache:       cache,
 	}, nil
 }
 
 func normalizeConfiguredIFaces(
 	ifaces map[string]config.Iface,
-) (map[string]config.Iface, map[string]int, error) {
+	preferIPv4 bool,
+) (map[string]config.Iface, map[string]ifaceBinding, error) {
 	normalized := make(map[string]config.Iface, len(ifaces))
-	indexes := make(map[string]int, len(ifaces))
+	bindings := make(map[string]ifaceBinding, len(ifaces))
 	for configuredName, ifaceCfg := range ifaces {
 		resolvedIface, err := ResolveInterface(configuredName)
 		if err != nil {
@@ -64,11 +73,43 @@ func normalizeConfiguredIFaces(
 			)
 		}
 
+		sourceIP := normalizeSourceIP(ifaceCfg.SourceIP, preferIPv4)
+		if ifaceCfg.SourceIP != nil && sourceIP == nil {
+			family := "IPv6"
+			if preferIPv4 {
+				family = "IPv4"
+			}
+			return nil, nil, fmt.Errorf(
+				"interface %q source_ip %q does not match upstream address family %s",
+				configuredName,
+				ifaceCfg.SourceIP.String(),
+				family,
+			)
+		}
+
+		ifaceCfg.SourceIP = cloneIP(sourceIP)
 		normalized[resolvedName] = ifaceCfg
-		indexes[resolvedName] = resolvedIface.Index
+		bindings[resolvedName] = ifaceBinding{
+			name:     resolvedName,
+			index:    resolvedIface.Index,
+			sourceIP: cloneIP(sourceIP),
+		}
 	}
 
-	return normalized, indexes, nil
+	return normalized, bindings, nil
+}
+
+func normalizeSourceIP(ip net.IP, preferIPv4 bool) net.IP {
+	if ip == nil {
+		return nil
+	}
+	if preferIPv4 {
+		return ip.To4()
+	}
+	if ip.To4() != nil {
+		return nil
+	}
+	return ip
 }
 
 // Serve starts listening and blocks until context cancellation or fatal listener failure.
@@ -116,21 +157,21 @@ func (s *Server) handleConnection(ctx context.Context, id uint64, clientConn net
 		return
 	}
 
-	ifaceIndex, ok := s.ifaceIndexByName[ifaceName]
+	binding, ok := s.ifaceBindings[ifaceName]
 	if !ok {
-		logger.Warn("missing cached interface index",
+		logger.Warn("missing cached interface binding",
 			zap.Uint64("connection_id", id),
 			zap.String("iface", ifaceName),
 		)
 		return
 	}
 
-	bindIP, err := ResolveBindIPByIndex(ifaceIndex, s.cfg.Server.Addr().Is4())
+	bindIP, err := s.ipCache.GetBindIP(binding, s.cfg.Server.Addr().Is4())
 	if err != nil {
 		logger.Warn("failed to resolve interface ip",
 			zap.Uint64("connection_id", id),
 			zap.String("iface", ifaceName),
-			zap.Int("iface_index", ifaceIndex),
+			zap.Int("iface_index", binding.index),
 			zap.Error(err),
 		)
 		return
@@ -142,7 +183,7 @@ func (s *Server) handleConnection(ctx context.Context, id uint64, clientConn net
 		logger.Warn("failed to dial upstream",
 			zap.Uint64("connection_id", id),
 			zap.String("iface", ifaceName),
-			zap.Int("iface_index", ifaceIndex),
+			zap.Int("iface_index", binding.index),
 			zap.String("bind_ip", bindIP.String()),
 			zap.Error(err),
 		)
@@ -154,7 +195,7 @@ func (s *Server) handleConnection(ctx context.Context, id uint64, clientConn net
 		zap.Uint64("connection_id", id),
 		zap.String("client", clientConn.RemoteAddr().String()),
 		zap.String("iface", ifaceName),
-		zap.Int("iface_index", ifaceIndex),
+		zap.Int("iface_index", binding.index),
 		zap.String("bind_ip", bindIP.String()),
 		zap.String("upstream", s.cfg.Server.String()),
 	)
