@@ -1,5 +1,6 @@
 listen: 127.0.0.1:8060
 server: 192.168.1.2:8060
+metrics: 0.0.0.0:3000
 
 cache:
   # TTL for interface IP lookups (ignored when prefetch=true)

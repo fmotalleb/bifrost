@@ -19,16 +19,21 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"maps"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/fmotalleb/go-tools/git"
 	"github.com/fmotalleb/go-tools/log"
 	"github.com/fmotalleb/go-tools/reloader"
 	"github.com/spf13/cobra"
+	"go.uber.org/zap"
 
 	"github.com/fmotalleb/bifrost/config"
+	"github.com/fmotalleb/bifrost/internal/metrics"
 	"github.com/fmotalleb/bifrost/internal/proxy"
 )
 
@@ -63,13 +68,33 @@ var rootCmd = &cobra.Command{
 		err = reloader.WithOsSignal(
 			ctx,
 			func(ctx context.Context) error {
+				logger := log.Of(ctx)
 				if pErr := config.Parse(ctx, &cfg, configFile); pErr != nil {
 					return pErr
 				}
 				if vErr := cfg.Validate(); vErr != nil {
 					return fmt.Errorf("validate config: %w", vErr)
 				}
-				srv, sErr := proxy.NewServer(cfg)
+
+				telemetry := proxy.NoopTelemetry
+				if cfg.Metrics.IsValid() {
+					ifaceNames := slices.Sorted(maps.Keys(cfg.IFaces))
+					metricsServer, mErr := metrics.NewServer(cfg.Metrics, ifaceNames)
+					if mErr != nil {
+						return fmt.Errorf("create metrics server: %w", mErr)
+					}
+					telemetry = metricsServer.Telemetry()
+
+					go func() {
+						if err := metricsServer.Serve(ctx); err != nil && !errors.Is(err, context.Canceled) {
+							logger.Warn("metrics server stopped with error", zap.Error(err))
+						}
+					}()
+
+					logger.Info("metrics server listening", zap.String("metrics", cfg.Metrics.String()))
+				}
+
+				srv, sErr := proxy.NewServer(cfg, telemetry)
 				if sErr != nil {
 					return fmt.Errorf("create server: %w", sErr)
 				}

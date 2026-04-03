@@ -50,6 +50,7 @@ Example configuration:
 ```yaml
 listen: 127.0.0.1:8080
 server: 94.93.92.91:8080
+metrics: 0.0.0.0:3000
 
 cache:
   ttl: 30s
@@ -69,6 +70,7 @@ ifaces:
 
 * listen: local address to accept incoming connections
 * server: upstream target address
+* metrics: optional metrics/dashboard listener; when set, exposes `/metrics`, `/api/snapshot`, and `/`
 * cache.ttl: TTL for interface IP lookup cache (for example: `30s`, `5m`, `0s`)
 * cache.prefetch: when `true`, resolve interface IPs at startup and keep them permanently (no per-connection lookup)
 * ifaces: map of network interfaces
@@ -88,6 +90,22 @@ Each interface:
 * With `cache.prefetch: true`, bind IPs are prefetched once at startup and reused
 * No packet-level balancing
 * No kernel bonding required
+
+## Metrics and Dashboard
+
+When `metrics` is set, Bifrost starts a small web server:
+
+* `/metrics`: Prometheus scrape endpoint
+* `/api/snapshot`: JSON summary for live counters/rates
+* `/`: built-in dashboard (single HTML page with inline CSS/JS)
+
+Exported Prometheus metrics:
+
+* `bifrost_failed_connections_total{iface}`
+* `bifrost_successful_connections_total{iface}`
+* `bifrost_transfer_bytes_total{iface,direction}` where `direction` is `tx` or `rx`
+* `bifrost_connection_tx_bytes{iface}` histogram (per successful connection)
+* `bifrost_connection_rx_bytes{iface}` histogram (per successful connection)
 
 ## Example
 
@@ -114,5 +132,4 @@ Traffic will be distributed across eth0 and eth1 according to weights.
 * Interface health monitoring
 * Dynamic weight adjustment (reputation)
 * Failover handling
-* Metrics and observability (Prometheus)
 * UDP support

@@ -8,10 +8,11 @@ import (
 
 // Config contains the runtime settings for bifrost.
 type Config struct {
-	Listen netip.AddrPort   `mapstructure:"listen"`
-	Server netip.AddrPort   `mapstructure:"server"`
-	Cache  CacheConfig      `mapstructure:"cache"`
-	IFaces map[string]Iface `mapstructure:"ifaces"`
+	Listen  netip.AddrPort   `mapstructure:"listen"`
+	Server  netip.AddrPort   `mapstructure:"server"`
+	Metrics netip.AddrPort   `mapstructure:"metrics"`
+	Cache   CacheConfig      `mapstructure:"cache"`
+	IFaces  map[string]Iface `mapstructure:"ifaces"`
 }
 
 // CacheConfig controls source IP lookup caching behavior.

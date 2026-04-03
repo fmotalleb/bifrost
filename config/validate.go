@@ -14,6 +14,10 @@ func (c Config) Validate() error {
 		return fmt.Errorf("server must be a valid address:port")
 	}
 
+	if c.Metrics.IsValid() && c.Metrics == c.Listen {
+		return fmt.Errorf("metrics must be different from listen")
+	}
+
 	if c.Cache.TTL < 0 {
 		return fmt.Errorf("cache.ttl must be zero or greater")
 	}

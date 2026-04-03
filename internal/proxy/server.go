@@ -23,11 +23,12 @@ type Server struct {
 	selector      *Selector
 	ifaceBindings map[string]ifaceBinding
 	ipCache       *IPCache
+	telemetry     Telemetry
 	connID        atomic.Uint64
 }
 
 // NewServer constructs a proxy server from config.
-func NewServer(cfg config.Config) (*Server, error) {
+func NewServer(cfg config.Config, telemetry Telemetry) (*Server, error) {
 	preferIPv4 := cfg.Server.Addr().Is4()
 	normalizedIFaces, bindings, err := normalizeConfiguredIFaces(cfg.IFaces, preferIPv4)
 	if err != nil {
@@ -44,12 +45,16 @@ func NewServer(cfg config.Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	if telemetry == nil {
+		telemetry = NoopTelemetry
+	}
 
 	return &Server{
 		cfg:           cfg,
 		selector:      selector,
 		ifaceBindings: bindings,
 		ipCache:       cache,
+		telemetry:     telemetry,
 	}, nil
 }
 
@@ -158,6 +163,13 @@ func (s *Server) handleConnection(ctx context.Context, id uint64, clientConn net
 	}
 	defer s.selector.Release(ifaceName)
 
+	var txBytes int64
+	var rxBytes int64
+	var success bool
+	defer func() {
+		s.telemetry.ObserveConnection(ifaceName, success, txBytes, rxBytes)
+	}()
+
 	binding, ok := s.ifaceBindings[ifaceName]
 	if !ok {
 		logger.Warn("missing cached interface binding",
@@ -191,6 +203,7 @@ func (s *Server) handleConnection(ctx context.Context, id uint64, clientConn net
 		return
 	}
 	defer upstreamConn.Close()
+	success = true
 
 	logger.Info("accepted connection",
 		zap.Uint64("connection_id", id),
@@ -201,7 +214,12 @@ func (s *Server) handleConnection(ctx context.Context, id uint64, clientConn net
 		zap.String("upstream", s.cfg.Server.String()),
 	)
 
-	if proxyErr := pipeBothWays(clientConn, upstreamConn); proxyErr != nil {
+	stats, proxyErr := pipeBothWays(clientConn, upstreamConn, func(direction string, bytes int64) {
+		s.telemetry.AddTransfer(ifaceName, direction, bytes)
+	})
+	txBytes = stats.clientToUpstream
+	rxBytes = stats.upstreamToClient
+	if proxyErr != nil {
 		fields := []zap.Field{
 			zap.Uint64("connection_id", id),
 			zap.String("client", clientConn.RemoteAddr().String()),
@@ -213,31 +231,55 @@ func (s *Server) handleConnection(ctx context.Context, id uint64, clientConn net
 			return
 		}
 		logger.Warn("proxy stream failed", fields...)
+		return
 	}
 }
 
-func pipeBothWays(clientConn, upstreamConn net.Conn) error {
+type transferStats struct {
+	clientToUpstream int64
+	upstreamToClient int64
+}
+
+func pipeBothWays(
+	clientConn, upstreamConn net.Conn,
+	onTransfer func(direction string, bytes int64),
+) (transferStats, error) {
 	group := new(errgroup.Group)
 	results := make(chan streamCopyResult, 2)
 
 	group.Go(func() error {
-		results <- copyAndCloseWrite(upstreamConn, clientConn, "client_to_upstream")
+		results <- copyAndCloseWrite(
+			withMonitoredWrite(upstreamConn, DirectionTX, onTransfer),
+			clientConn,
+			"client_to_upstream",
+		)
 		return nil
 	})
 
 	group.Go(func() error {
-		results <- copyAndCloseWrite(clientConn, upstreamConn, "upstream_to_client")
+		results <- copyAndCloseWrite(
+			withMonitoredWrite(clientConn, DirectionRX, onTransfer),
+			upstreamConn,
+			"upstream_to_client",
+		)
 		return nil
 	})
 
 	_ = group.Wait()
 	close(results)
 
+	stats := transferStats{}
 	var aborted bool
 	unexpected := make([]error, 0, 2)
 	for result := range results {
 		if result.aborted {
 			aborted = true
+		}
+		switch result.direction {
+		case DirectionTX:
+			stats.clientToUpstream = result.bytes
+		case DirectionRX:
+			stats.upstreamToClient = result.bytes
 		}
 		if result.err != nil {
 			unexpected = append(unexpected, result.err)
@@ -245,24 +287,28 @@ func pipeBothWays(clientConn, upstreamConn net.Conn) error {
 	}
 
 	if len(unexpected) > 0 {
-		return errors.Join(unexpected...)
+		return stats, errors.Join(unexpected...)
 	}
 	if aborted {
-		return errStreamAborted
+		return stats, errStreamAborted
 	}
 
-	return nil
+	return stats, nil
 }
 
 type streamCopyResult struct {
-	aborted bool
-	err     error
+	direction string
+	bytes     int64
+	aborted   bool
+	err       error
 }
 
 func copyAndCloseWrite(dst, src net.Conn, direction string) streamCopyResult {
-	result := streamCopyResult{}
+	result := streamCopyResult{direction: classifyDirection(direction)}
 
-	if _, err := io.Copy(dst, src); err != nil {
+	copied, err := io.Copy(dst, src)
+	result.bytes = copied
+	if err != nil {
 		if isHotPathConnectionError(err) {
 			result.aborted = true
 		} else {
@@ -283,13 +329,57 @@ func copyAndCloseWrite(dst, src net.Conn, direction string) streamCopyResult {
 	return result
 }
 
+func classifyDirection(direction string) string {
+	switch direction {
+	case "client_to_upstream":
+		return DirectionTX
+	case "upstream_to_client":
+		return DirectionRX
+	default:
+		return ""
+	}
+}
+
+type monitoredConn struct {
+	net.Conn
+	direction  string
+	onTransfer func(direction string, bytes int64)
+}
+
+func (c monitoredConn) Write(p []byte) (int, error) {
+	n, err := c.Conn.Write(p)
+	if n > 0 && c.onTransfer != nil {
+		c.onTransfer(c.direction, int64(n))
+	}
+	return n, err
+}
+
+func (c monitoredConn) CloseWrite() error {
+	closeWriter, ok := c.Conn.(interface{ CloseWrite() error })
+	if !ok {
+		return c.Conn.Close()
+	}
+	return closeWriter.CloseWrite()
+}
+
+func withMonitoredWrite(conn net.Conn, direction string, onTransfer func(string, int64)) net.Conn {
+	if onTransfer == nil {
+		return conn
+	}
+	return monitoredConn{
+		Conn:       conn,
+		direction:  direction,
+		onTransfer: onTransfer,
+	}
+}
+
 func closeWrite(conn net.Conn) error {
-	tcpConn, ok := conn.(*net.TCPConn)
+	closeWriter, ok := conn.(interface{ CloseWrite() error })
 	if !ok {
 		return conn.Close()
 	}
 
-	return tcpConn.CloseWrite()
+	return closeWriter.CloseWrite()
 }
 
 func isHotPathConnectionError(err error) bool {
