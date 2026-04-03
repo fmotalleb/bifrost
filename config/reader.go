@@ -8,6 +8,7 @@ import (
 	"github.com/fmotalleb/go-tools/decoder"
 )
 
+// Parse reads merged config data and decodes it into dst.
 func Parse(ctx context.Context, dst *Config, path string) error {
 	cfg, err := config.ReadAndMergeConfig(ctx, path)
 	if err != nil {

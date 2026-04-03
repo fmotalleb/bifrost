@@ -38,14 +38,13 @@ import (
 )
 
 var (
-	dump  = false
 	debug = false
 )
 
 // rootCmd represents the base command when called without any subcommands.
 var rootCmd = &cobra.Command{
 	Use:     "bifrost",
-	Short:   "Bifrost combines multiple network interfaces with weighting to distribute TCP traffic, effectively overriding default routing behavior, to achive maximum speed on multi connection scenarios.",
+	Short:   "Bifrost combines multiple network interfaces with weighting to distribute TCP traffic, effectively overriding default routing behavior, to achieve maximum speed on multi connection scenarios.",
 	Version: git.String(),
 	PersistentPreRun: func(_ *cobra.Command, _ []string) {
 		if debug {
@@ -72,7 +71,7 @@ var rootCmd = &cobra.Command{
 				if pErr := config.Parse(ctx, &cfg, configFile); pErr != nil {
 					return pErr
 				}
-				if vErr := cfg.Validate(); vErr != nil {
+				if vErr := config.Validate(cfg); vErr != nil {
 					return fmt.Errorf("validate config: %w", vErr)
 				}
 
@@ -86,8 +85,9 @@ var rootCmd = &cobra.Command{
 					telemetry = metricsServer.Telemetry()
 
 					go func() {
-						if err := metricsServer.Serve(ctx); err != nil && !errors.Is(err, context.Canceled) {
-							logger.Warn("metrics server stopped with error", zap.Error(err))
+						if serveErr := metricsServer.Serve(ctx); serveErr != nil &&
+							!errors.Is(serveErr, context.Canceled) {
+							logger.Warn("metrics server stopped with error", zap.Error(serveErr))
 						}
 					}()
 

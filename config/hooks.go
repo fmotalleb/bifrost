@@ -13,6 +13,11 @@ import (
 	"github.com/go-viper/mapstructure/v2"
 )
 
+const (
+	addrPortOnlyPortParts = 1
+	addrPortHostPortParts = 2
+)
+
 // init registers mapstructure decode hooks that convert configuration values into netip.AddrPort and net.IP types.
 // It registers StringToNetAddrPortHook, StringToNetAddrHook, IntToNetAddrPortHook, and StringToCIDRHook.
 func init() {
@@ -42,10 +47,10 @@ func StringToNetAddrPortHook() mapstructure.DecodeHookFunc {
 			split := strings.Split(str, ":")
 			final := new([2]string)
 			switch len(split) {
-			case 1:
+			case addrPortOnlyPortParts:
 				final[0] = ""
 				final[1] = split[0]
-			case 2:
+			case addrPortHostPortParts:
 				final[0] = split[0]
 				final[1] = split[1]
 			}

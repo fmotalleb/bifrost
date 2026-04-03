@@ -1,8 +1,10 @@
+// Package metrics exposes Prometheus metrics and a built-in dashboard.
 package metrics
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -20,6 +22,14 @@ import (
 )
 
 const unassignedIface = "unassigned"
+
+const (
+	perConnectionBucketStart  = 1024
+	perConnectionBucketFactor = 2
+	perConnectionBucketCount  = 20
+	httpReadHeaderTimeout     = 5 * time.Second
+	httpShutdownTimeout       = 5 * time.Second
+)
 
 type ifaceCounters struct {
 	success uint64
@@ -93,7 +103,11 @@ func newRecorder(ifaces []string, registerer prometheus.Registerer) *Recorder {
 				Namespace: "bifrost",
 				Name:      "connection_tx_bytes",
 				Help:      "Client-to-upstream transferred bytes per successful connection.",
-				Buckets:   prometheus.ExponentialBuckets(1024, 2, 20),
+				Buckets: prometheus.ExponentialBuckets(
+					perConnectionBucketStart,
+					perConnectionBucketFactor,
+					perConnectionBucketCount,
+				),
 			},
 			[]string{"iface"},
 		),
@@ -102,7 +116,11 @@ func newRecorder(ifaces []string, registerer prometheus.Registerer) *Recorder {
 				Namespace: "bifrost",
 				Name:      "connection_rx_bytes",
 				Help:      "Upstream-to-client transferred bytes per successful connection.",
-				Buckets:   prometheus.ExponentialBuckets(1024, 2, 20),
+				Buckets: prometheus.ExponentialBuckets(
+					perConnectionBucketStart,
+					perConnectionBucketFactor,
+					perConnectionBucketCount,
+				),
 			},
 			[]string{"iface"},
 		),
@@ -252,7 +270,7 @@ type Server struct {
 // NewServer creates a metrics web server with /metrics and dashboard routes.
 func NewServer(addr netip.AddrPort, ifaces []string) (*Server, error) {
 	if !addr.IsValid() {
-		return nil, fmt.Errorf("metrics address must be valid")
+		return nil, errors.New("metrics address must be valid")
 	}
 
 	registry := prometheus.NewRegistry()
@@ -271,7 +289,7 @@ func NewServer(addr netip.AddrPort, ifaces []string) (*Server, error) {
 	server.httpSrv = &http.Server{
 		Addr:              addr.String(),
 		Handler:           mux,
-		ReadHeaderTimeout: 5 * time.Second,
+		ReadHeaderTimeout: httpReadHeaderTimeout,
 	}
 
 	return server, nil
@@ -284,20 +302,21 @@ func (s *Server) Telemetry() proxy.Telemetry {
 
 // Serve starts the metrics server and stops it when context is canceled.
 func (s *Server) Serve(ctx context.Context) error {
-	listener, err := net.Listen("tcp", s.addr.String())
+	var listenConfig net.ListenConfig
+	listener, err := listenConfig.Listen(ctx, "tcp", s.addr.String())
 	if err != nil {
 		return fmt.Errorf("listen metrics on %s: %w", s.addr.String(), err)
 	}
 
 	go func() {
 		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), httpShutdownTimeout)
 		defer cancel()
 		_ = s.httpSrv.Shutdown(shutdownCtx)
 	}()
 
 	err = s.httpSrv.Serve(listener)
-	if err == nil || err == http.ErrServerClosed {
+	if err == nil || errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}
 	return fmt.Errorf("serve metrics http: %w", err)

@@ -1,11 +1,10 @@
 package proxy
 
 import (
+	"errors"
 	"fmt"
-	"math/rand/v2"
 	"sort"
 	"sync"
-	"time"
 
 	"github.com/fmotalleb/bifrost/config"
 )
@@ -19,14 +18,14 @@ type weightedChoice struct {
 type Selector struct {
 	choices []weightedChoice
 	active  map[string]int
-	rng     *rand.Rand
+	nextTie int
 	mu      sync.Mutex
 }
 
 // NewSelector builds a weighted selector from interface config.
 func NewSelector(ifaces map[string]config.Iface) (*Selector, error) {
 	if len(ifaces) == 0 {
-		return nil, fmt.Errorf("no interfaces configured")
+		return nil, errors.New("no interfaces configured")
 	}
 
 	names := make([]string, 0, len(ifaces))
@@ -45,12 +44,9 @@ func NewSelector(ifaces map[string]config.Iface) (*Selector, error) {
 		choices = append(choices, weightedChoice{name: name, weight: weight})
 	}
 
-	seed := uint64(time.Now().UnixNano())
-
 	return &Selector{
 		choices: choices,
 		active:  make(map[string]int, len(choices)),
-		rng:     rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15)),
 	}, nil
 }
 
@@ -58,7 +54,7 @@ func NewSelector(ifaces map[string]config.Iface) (*Selector, error) {
 // Interfaces with lower active/weight ratio are preferred.
 func (s *Selector) Pick() (string, error) {
 	if s == nil || len(s.choices) == 0 {
-		return "", fmt.Errorf("selector is not initialized")
+		return "", errors.New("selector is not initialized")
 	}
 
 	s.mu.Lock()
@@ -80,7 +76,8 @@ func (s *Selector) Pick() (string, error) {
 	}
 
 	if len(equivalent) > 1 {
-		selected = equivalent[s.rng.IntN(len(equivalent))]
+		selected = equivalent[s.nextTie%len(equivalent)]
+		s.nextTie++
 	}
 
 	s.active[selected.name]++

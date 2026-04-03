@@ -1,6 +1,8 @@
+// Package proxy contains TCP proxying and interface selection logic.
 package proxy
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -113,7 +115,7 @@ func ResolveInterface(interfaceName string) (*net.Interface, error) {
 func resolveInterfaceByName(interfaceName string) (*net.Interface, error) {
 	target := normalizeIfaceName(interfaceName)
 	if target == "" {
-		return nil, fmt.Errorf("interface name cannot be empty")
+		return nil, errors.New("interface name cannot be empty")
 	}
 
 	iface, err := net.InterfaceByName(target)

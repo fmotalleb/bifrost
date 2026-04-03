@@ -17,6 +17,10 @@ import (
 
 var errStreamAborted = errors.New("proxy stream aborted")
 
+const (
+	streamDirections = 2
+)
+
 // Server is a TCP reverse proxy that binds each upstream connection to a selected interface.
 type Server struct {
 	cfg           config.Config
@@ -120,7 +124,8 @@ func normalizeSourceIP(ip net.IP, preferIPv4 bool) net.IP {
 // Serve starts listening and blocks until context cancellation or fatal listener failure.
 func (s *Server) Serve(ctx context.Context) error {
 	logger := log.Of(ctx)
-	listener, err := net.Listen("tcp", s.cfg.Listen.String())
+	var listenConfig net.ListenConfig
+	listener, err := listenConfig.Listen(ctx, "tcp", s.cfg.Listen.String())
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", s.cfg.Listen, err)
 	}
@@ -245,7 +250,7 @@ func pipeBothWays(
 	onTransfer func(direction string, bytes int64),
 ) (transferStats, error) {
 	group := new(errgroup.Group)
-	results := make(chan streamCopyResult, 2)
+	results := make(chan streamCopyResult, streamDirections)
 
 	group.Go(func() error {
 		results <- copyAndCloseWrite(
@@ -270,7 +275,7 @@ func pipeBothWays(
 
 	stats := transferStats{}
 	var aborted bool
-	unexpected := make([]error, 0, 2)
+	unexpected := make([]error, 0, streamDirections)
 	for result := range results {
 		if result.aborted {
 			aborted = true
@@ -317,11 +322,12 @@ func copyAndCloseWrite(dst, src net.Conn, direction string) streamCopyResult {
 	}
 
 	if err := closeWrite(dst); err != nil {
-		if isHotPathConnectionError(err) {
+		switch {
+		case isHotPathConnectionError(err):
 			result.aborted = true
-		} else if result.err == nil {
+		case result.err == nil:
 			result.err = fmt.Errorf("%s: close write: %w", direction, err)
-		} else {
+		default:
 			result.err = errors.Join(result.err, fmt.Errorf("%s: close write: %w", direction, err))
 		}
 	}
@@ -357,7 +363,7 @@ func (c monitoredConn) Write(p []byte) (int, error) {
 func (c monitoredConn) CloseWrite() error {
 	closeWriter, ok := c.Conn.(interface{ CloseWrite() error })
 	if !ok {
-		return c.Conn.Close()
+		return c.Close()
 	}
 	return closeWriter.CloseWrite()
 }
