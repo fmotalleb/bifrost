@@ -2,6 +2,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -11,7 +12,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var detailedIfaces bool
+var (
+	detailedIfaces bool
+	jsonIfaces     bool
+)
 
 const ifaceFlagsCapacity = 6
 
@@ -29,6 +33,10 @@ var listIfacesCmd = &cobra.Command{
 			return ifaces[i].Name < ifaces[j].Name
 		})
 
+		if jsonIfaces {
+			return printIfacesJSON(cmd, ifaces, detailedIfaces)
+		}
+
 		if detailedIfaces {
 			return printDetailedIfaces(cmd, ifaces)
 		}
@@ -44,6 +52,12 @@ func init() {
 		"detailed",
 		false,
 		"show detailed interface information",
+	)
+	listIfacesCmd.Flags().BoolVar(
+		&jsonIfaces,
+		"json",
+		false,
+		"output in JSON format",
 	)
 }
 
@@ -112,12 +126,12 @@ func printIfaceHeader(writer io.Writer, iface net.Interface) error {
 
 // printIfaceAddresses prints all addresses bound to an interface.
 func printIfaceAddresses(writer io.Writer, iface net.Interface) error {
-	addrs, err := iface.Addrs()
+	addresses, err := ifaceAddresses(iface)
 	if err != nil {
-		return fmt.Errorf("list addresses for %q: %w", iface.Name, err)
+		return err
 	}
 
-	if len(addrs) == 0 {
+	if len(addresses) == 0 {
 		_, printErr := fmt.Fprintln(writer, "addresses: -")
 		return printErr
 	}
@@ -126,16 +140,81 @@ func printIfaceAddresses(writer io.Writer, iface net.Interface) error {
 		return err
 	}
 
-	for _, addr := range addrs {
-		if _, err := fmt.Fprintf(writer, "  - %s\n", addr.String()); err != nil {
+	for _, address := range addresses {
+		if _, err := fmt.Fprintf(writer, "  - %s\n", address); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
+func ifaceAddresses(iface net.Interface) ([]string, error) {
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return nil, fmt.Errorf("list addresses for %q: %w", iface.Name, err)
+	}
+
+	addresses := make([]string, 0, len(addrs))
+	for _, addr := range addrs {
+		addresses = append(addresses, addr.String())
+	}
+
+	return addresses, nil
+}
+
+type ifaceDetailJSON struct {
+	Name      string   `json:"name"`
+	Index     int      `json:"index"`
+	MTU       int      `json:"mtu"`
+	MAC       string   `json:"mac"`
+	Flags     []string `json:"flags"`
+	Addresses []string `json:"addresses"`
+}
+
+func printIfacesJSON(cmd *cobra.Command, ifaces []net.Interface, detailed bool) error {
+	w := cmd.OutOrStdout()
+	encoder := json.NewEncoder(w)
+	encoder.SetIndent("", "  ")
+
+	if !detailed {
+		names := make([]string, 0, len(ifaces))
+		for _, iface := range ifaces {
+			names = append(names, iface.Name)
+		}
+		return encoder.Encode(names)
+	}
+
+	result := make([]ifaceDetailJSON, 0, len(ifaces))
+	for _, iface := range ifaces {
+		addresses, err := ifaceAddresses(iface)
+		if err != nil {
+			return err
+		}
+
+		result = append(result, ifaceDetailJSON{
+			Name:      iface.Name,
+			Index:     iface.Index,
+			MTU:       iface.MTU,
+			MAC:       iface.HardwareAddr.String(),
+			Flags:     ifaceFlagLabels(iface.Flags),
+			Addresses: addresses,
+		})
+	}
+
+	return encoder.Encode(result)
+}
+
 // formatFlags converts net flags to comma-separated labels.
 func formatFlags(flags net.Flags) string {
+	parts := ifaceFlagLabels(flags)
+	if len(parts) == 0 {
+		return "-"
+	}
+
+	return strings.Join(parts, ",")
+}
+
+func ifaceFlagLabels(flags net.Flags) []string {
 	parts := make([]string, 0, ifaceFlagsCapacity)
 	if flags&net.FlagUp != 0 {
 		parts = append(parts, "up")
@@ -156,9 +235,5 @@ func formatFlags(flags net.Flags) string {
 		parts = append(parts, "running")
 	}
 
-	if len(parts) == 0 {
-		return "-"
-	}
-
-	return strings.Join(parts, ",")
+	return parts
 }
