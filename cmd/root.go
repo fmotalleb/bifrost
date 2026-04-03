@@ -37,9 +37,7 @@ import (
 	"github.com/fmotalleb/bifrost/internal/proxy"
 )
 
-var (
-	debug = false
-)
+var debug = false
 
 // rootCmd represents the base command when called without any subcommands.
 var rootCmd = &cobra.Command{

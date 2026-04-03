@@ -96,6 +96,7 @@ func (c *IPCache) GetBindIP(binding ifaceBinding, preferIPv4 bool) (net.IP, erro
 	return cloneIP(resolvedIP), nil
 }
 
+// cloneIP returns a deep copy of ip to avoid sharing mutable byte slices.
 func cloneIP(ip net.IP) net.IP {
 	if ip == nil {
 		return nil

@@ -1,3 +1,4 @@
+// Package cmd defines bifrost CLI commands.
 package cmd
 
 import (
@@ -11,8 +12,10 @@ import (
 )
 
 var detailedIfaces bool
+
 const ifaceFlagsCapacity = 6
 
+// listIfacesCmd prints network interfaces available on the local host.
 var listIfacesCmd = &cobra.Command{
 	Use:   "list-ifaces",
 	Short: "List available network interfaces",
@@ -55,6 +58,7 @@ func printIfaceNames(cmd *cobra.Command, ifaces []net.Interface) error {
 	return nil
 }
 
+// printDetailedIfaces prints a human-readable block for each interface.
 func printDetailedIfaces(cmd *cobra.Command, ifaces []net.Interface) error {
 	w := cmd.OutOrStdout()
 	for idx := range ifaces {
@@ -66,6 +70,7 @@ func printDetailedIfaces(cmd *cobra.Command, ifaces []net.Interface) error {
 	return nil
 }
 
+// printDetailedIface prints one interface block.
 func printDetailedIface(writer io.Writer, iface net.Interface, withSeparator bool) error {
 	if withSeparator {
 		if _, err := fmt.Fprintln(writer); err != nil {
@@ -79,6 +84,7 @@ func printDetailedIface(writer io.Writer, iface net.Interface, withSeparator boo
 	return printIfaceAddresses(writer, iface)
 }
 
+// printIfaceHeader prints static interface metadata.
 func printIfaceHeader(writer io.Writer, iface net.Interface) error {
 	if _, err := fmt.Fprintf(writer, "name: %s\n", iface.Name); err != nil {
 		return err
@@ -104,6 +110,7 @@ func printIfaceHeader(writer io.Writer, iface net.Interface) error {
 	return nil
 }
 
+// printIfaceAddresses prints all addresses bound to an interface.
 func printIfaceAddresses(writer io.Writer, iface net.Interface) error {
 	addrs, err := iface.Addrs()
 	if err != nil {
@@ -127,6 +134,7 @@ func printIfaceAddresses(writer io.Writer, iface net.Interface) error {
 	return nil
 }
 
+// formatFlags converts net flags to comma-separated labels.
 func formatFlags(flags net.Flags) string {
 	parts := make([]string, 0, ifaceFlagsCapacity)
 	if flags&net.FlagUp != 0 {

@@ -68,6 +68,7 @@ func Validate(cfg Config) error {
 	return nil
 }
 
+// mapValidationError translates validator errors into user-facing config errors.
 func mapValidationError(err error) error {
 	var invalidValidation *validator.InvalidValidationError
 	if errors.As(err, &invalidValidation) {

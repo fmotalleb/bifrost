@@ -34,7 +34,7 @@ Interface selection is based on configured weights and current active load:
 
 * Higher weight allows proportionally more concurrent active connections
 * New connections are assigned to the interface with the lowest active/weight ratio
-* Ties are broken randomly
+* Ties are broken in round-robin order
 
 Example:
 

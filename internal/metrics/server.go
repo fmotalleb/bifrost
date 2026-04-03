@@ -149,6 +149,7 @@ func newRecorder(ifaces []string, registerer prometheus.Registerer) *Recorder {
 	return recorder
 }
 
+// normalizeIface canonicalizes interface names for stable metric labels.
 func normalizeIface(iface string) string {
 	name := strings.TrimSpace(iface)
 	if name == "" {
@@ -157,6 +158,7 @@ func normalizeIface(iface string) string {
 	return strings.ToLower(name)
 }
 
+// counterFor returns an existing per-interface counter set or creates one lazily.
 func (r *Recorder) counterFor(iface string) *ifaceCounters {
 	name := normalizeIface(iface)
 	r.mu.RLock()
@@ -322,6 +324,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	return fmt.Errorf("serve metrics http: %w", err)
 }
 
+// handleSnapshot serves a JSON snapshot consumed by the built-in dashboard.
 func (s *Server) handleSnapshot(writer http.ResponseWriter, _ *http.Request) {
 	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 	if err := json.NewEncoder(writer).Encode(s.recorder.Snapshot()); err != nil {
@@ -329,6 +332,7 @@ func (s *Server) handleSnapshot(writer http.ResponseWriter, _ *http.Request) {
 	}
 }
 
+// handleDashboard serves the embedded single-file metrics UI.
 func (s *Server) handleDashboard(writer http.ResponseWriter, _ *http.Request) {
 	writer.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = writer.Write([]byte(dashboardHTML))

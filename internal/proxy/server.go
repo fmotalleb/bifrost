@@ -108,6 +108,7 @@ func normalizeConfiguredIFaces(
 	return normalized, bindings, nil
 }
 
+// normalizeSourceIP keeps only the address family used by the upstream server.
 func normalizeSourceIP(ip net.IP, preferIPv4 bool) net.IP {
 	if ip == nil {
 		return nil
@@ -335,6 +336,7 @@ func copyAndCloseWrite(dst, src net.Conn, direction string) streamCopyResult {
 	return result
 }
 
+// classifyDirection maps internal copy labels to exported metrics directions.
 func classifyDirection(direction string) string {
 	switch direction {
 	case "client_to_upstream":
@@ -379,6 +381,7 @@ func withMonitoredWrite(conn net.Conn, direction string, onTransfer func(string,
 	}
 }
 
+// closeWrite performs TCP half-close when available.
 func closeWrite(conn net.Conn) error {
 	closeWriter, ok := conn.(interface{ CloseWrite() error })
 	if !ok {
@@ -388,6 +391,7 @@ func closeWrite(conn net.Conn) error {
 	return closeWriter.CloseWrite()
 }
 
+// isHotPathConnectionError identifies expected close/read/write errors in proxy streams.
 func isHotPathConnectionError(err error) bool {
 	if err == nil {
 		return false

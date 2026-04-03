@@ -101,6 +101,7 @@ func (s *Selector) Release(name string) {
 	s.active[name] = active - 1
 }
 
+// compareLoadRatio compares active/weight for A and B without floats.
 func compareLoadRatio(activeA, weightA, activeB, weightB int) int {
 	left := activeA * weightB
 	right := activeB * weightA
