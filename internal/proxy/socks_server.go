@@ -30,31 +30,17 @@ type SOCKSServer struct {
 
 // NewSOCKSServer constructs a SOCKS5 server from config.
 func NewSOCKSServer(cfg config.Config, telemetry Telemetry) (*SOCKSServer, error) {
-	normalizedIFaces, bindings, err := normalizeConfiguredIFaces(cfg.IFaces, true)
-	if err != nil {
-		return nil, fmt.Errorf("normalize interfaces: %w", err)
-	}
-	cfg.IFaces = normalizedIFaces
-
-	cache, err := NewIPCache(cfg.Cache.TTL, cfg.Cache.Prefetch, bindings, true)
-	if err != nil {
-		return nil, fmt.Errorf("create ip cache: %w", err)
-	}
-
-	selector, err := NewSelector(cfg.IFaces)
+	runtime, err := prepareRuntimeDependencies(cfg, true, telemetry)
 	if err != nil {
 		return nil, err
 	}
-	if telemetry == nil {
-		telemetry = NoopTelemetry
-	}
 
 	return &SOCKSServer{
-		cfg:           cfg,
-		selector:      selector,
-		ifaceBindings: bindings,
-		ipCache:       cache,
-		telemetry:     telemetry,
+		cfg:           runtime.cfg,
+		selector:      runtime.selector,
+		ifaceBindings: runtime.bindings,
+		ipCache:       runtime.cache,
+		telemetry:     runtime.telemetry,
 	}, nil
 }
 

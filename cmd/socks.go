@@ -10,7 +10,6 @@ import (
 	"github.com/fmotalleb/go-tools/reloader"
 	"github.com/spf13/cobra"
 
-	"github.com/fmotalleb/bifrost/config"
 	"github.com/fmotalleb/bifrost/internal/proxy"
 )
 
@@ -20,32 +19,24 @@ var socksCmd = &cobra.Command{
 	Use:   "socks",
 	Short: "Run a SOCKS5 proxy that distributes outbound connections across interfaces",
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		configFile, err := cmd.Flags().GetString("config")
+		ctx, err := commandContext()
 		if err != nil {
 			return err
 		}
+
 		socksListenRaw, err := cmd.Flags().GetString("socks")
 		if err != nil {
 			return err
 		}
 		socksFlagChanged := cmd.Flags().Changed("socks")
 
-		ctx := context.Background()
-		ctx, err = log.WithNewEnvLogger(ctx)
-		if err != nil {
-			return err
-		}
-
 		return reloader.WithOsSignal(
 			ctx,
 			func(ctx context.Context) error {
 				logger := log.Of(ctx)
-				var cfg config.Config
-				if parseErr := config.Parse(ctx, &cfg, configFile); parseErr != nil {
-					return parseErr
-				}
-				if validateErr := config.Validate(cfg); validateErr != nil {
-					return fmt.Errorf("validate config: %w", validateErr)
+				cfg, err := loadValidatedConfig(ctx, cmd)
+				if err != nil {
+					return err
 				}
 				switch {
 				case socksFlagChanged:
@@ -83,7 +74,7 @@ var socksCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(socksCmd)
-	socksCmd.Flags().StringP("config", "c", "", "config file (default: reading config from stdin)")
+	addConfigFlag(socksCmd)
 	socksCmd.Flags().String(
 		"socks",
 		"",

@@ -34,31 +34,17 @@ type Server struct {
 // NewServer constructs a proxy server from config.
 func NewServer(cfg config.Config, telemetry Telemetry) (*Server, error) {
 	preferIPv4 := cfg.Server.Addr().Is4()
-	normalizedIFaces, bindings, err := normalizeConfiguredIFaces(cfg.IFaces, preferIPv4)
-	if err != nil {
-		return nil, fmt.Errorf("normalize interfaces: %w", err)
-	}
-	cfg.IFaces = normalizedIFaces
-
-	cache, err := NewIPCache(cfg.Cache.TTL, cfg.Cache.Prefetch, bindings, preferIPv4)
-	if err != nil {
-		return nil, fmt.Errorf("create ip cache: %w", err)
-	}
-
-	selector, err := NewSelector(cfg.IFaces)
+	runtime, err := prepareRuntimeDependencies(cfg, preferIPv4, telemetry)
 	if err != nil {
 		return nil, err
 	}
-	if telemetry == nil {
-		telemetry = NoopTelemetry
-	}
 
 	return &Server{
-		cfg:           cfg,
-		selector:      selector,
-		ifaceBindings: bindings,
-		ipCache:       cache,
-		telemetry:     telemetry,
+		cfg:           runtime.cfg,
+		selector:      runtime.selector,
+		ifaceBindings: runtime.bindings,
+		ipCache:       runtime.cache,
+		telemetry:     runtime.telemetry,
 	}, nil
 }
 

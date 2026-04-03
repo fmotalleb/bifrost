@@ -50,30 +50,21 @@ var rootCmd = &cobra.Command{
 		}
 	},
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		var configFile string
-		var err error
-		var cfg config.Config
-		if configFile, err = cmd.Flags().GetString("config"); err != nil {
-			return err
-		}
-		ctx := context.Background()
-		ctx, err = log.WithNewEnvLogger(ctx)
+		ctx, err := commandContext()
 		if err != nil {
 			return err
 		}
-		// defer cancel()
-		err = reloader.WithOsSignal(
+
+		return reloader.WithOsSignal(
 			ctx,
 			func(ctx context.Context) error {
+				cfg, err := loadValidatedConfig(ctx, cmd)
+				if err != nil {
+					return err
+				}
 				logger := log.Of(ctx)
-				if pErr := config.Parse(ctx, &cfg, configFile); pErr != nil {
-					return pErr
-				}
-				if vErr := config.Validate(cfg); vErr != nil {
-					return fmt.Errorf("validate config: %w", vErr)
-				}
-				var telemetry proxy.Telemetry
-				if telemetry, err = runMetricsServer(ctx, cfg, logger); err != nil {
+				telemetry, err := runMetricsServer(ctx, cfg, logger)
+				if err != nil {
 					return err
 				}
 
@@ -86,7 +77,6 @@ var rootCmd = &cobra.Command{
 			},
 			time.Minute,
 		)
-		return err
 	},
 }
 
@@ -101,7 +91,7 @@ func Execute() {
 
 // init initializes command-line flags for the root command, including configuration file path, format, debug mode, and dry-run options.
 func init() {
-	rootCmd.Flags().StringP("config", "c", "", "config file (default: reading config from stdin)")
+	addConfigFlag(rootCmd)
 	rootCmd.PersistentFlags().BoolVarP(&debug, "debug", "d", false, "enable debug mode")
 }
 
