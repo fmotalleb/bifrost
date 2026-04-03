@@ -2,20 +2,15 @@ package cmd
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"maps"
 	"net/netip"
-	"slices"
 	"time"
 
 	"github.com/fmotalleb/go-tools/log"
 	"github.com/fmotalleb/go-tools/reloader"
 	"github.com/spf13/cobra"
-	"go.uber.org/zap"
 
 	"github.com/fmotalleb/bifrost/config"
-	"github.com/fmotalleb/bifrost/internal/metrics"
 	"github.com/fmotalleb/bifrost/internal/proxy"
 )
 
@@ -69,23 +64,9 @@ var socksCmd = &cobra.Command{
 					cfg.Socks.Listen = socksListen
 				}
 
-				telemetry := proxy.NoopTelemetry
-				if cfg.Metrics.IsValid() {
-					ifaceNames := slices.Sorted(maps.Keys(cfg.IFaces))
-					metricsServer, metricsErr := metrics.NewServer(cfg.Metrics, ifaceNames)
-					if metricsErr != nil {
-						return fmt.Errorf("create metrics server: %w", metricsErr)
-					}
-					telemetry = metricsServer.Telemetry()
-
-					go func() {
-						if serveErr := metricsServer.Serve(ctx); serveErr != nil &&
-							!errors.Is(serveErr, context.Canceled) {
-							logger.Warn("metrics server stopped with error", zap.Error(serveErr))
-						}
-					}()
-
-					logger.Info("metrics server listening", zap.String("metrics", cfg.Metrics.String()))
+				var telemetry proxy.Telemetry
+				if telemetry, err = runMetricsServer(ctx, cfg, logger); err != nil {
+					return err
 				}
 
 				server, serverErr := proxy.NewSOCKSServer(cfg, telemetry)

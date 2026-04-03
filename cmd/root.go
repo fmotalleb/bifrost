@@ -72,24 +72,9 @@ var rootCmd = &cobra.Command{
 				if vErr := config.Validate(cfg); vErr != nil {
 					return fmt.Errorf("validate config: %w", vErr)
 				}
-
-				telemetry := proxy.NoopTelemetry
-				if cfg.Metrics.IsValid() {
-					ifaceNames := slices.Sorted(maps.Keys(cfg.IFaces))
-					metricsServer, mErr := metrics.NewServer(cfg.Metrics, ifaceNames)
-					if mErr != nil {
-						return fmt.Errorf("create metrics server: %w", mErr)
-					}
-					telemetry = metricsServer.Telemetry()
-
-					go func() {
-						if serveErr := metricsServer.Serve(ctx); serveErr != nil &&
-							!errors.Is(serveErr, context.Canceled) {
-							logger.Warn("metrics server stopped with error", zap.Error(serveErr))
-						}
-					}()
-
-					logger.Info("metrics server listening", zap.String("metrics", cfg.Metrics.String()))
+				var telemetry proxy.Telemetry
+				if telemetry, err = runMetricsServer(ctx, cfg, logger); err != nil {
+					return err
 				}
 
 				srv, sErr := proxy.NewServer(cfg, telemetry)
@@ -118,4 +103,26 @@ func Execute() {
 func init() {
 	rootCmd.Flags().StringP("config", "c", "", "config file (default: reading config from stdin)")
 	rootCmd.PersistentFlags().BoolVarP(&debug, "debug", "d", false, "enable debug mode")
+}
+
+func runMetricsServer(ctx context.Context, cfg config.Config, logger *zap.Logger) (proxy.Telemetry, error) {
+	telemetry := proxy.NoopTelemetry
+	if cfg.Metrics.IsValid() {
+		ifaceNames := slices.Sorted(maps.Keys(cfg.IFaces))
+		metricsServer, mErr := metrics.NewServer(cfg.Metrics, ifaceNames)
+		if mErr != nil {
+			return nil, fmt.Errorf("create metrics server: %w", mErr)
+		}
+		telemetry = metricsServer.Telemetry()
+
+		go func() {
+			if serveErr := metricsServer.Serve(ctx); serveErr != nil &&
+				!errors.Is(serveErr, context.Canceled) {
+				logger.Warn("metrics server stopped with error", zap.Error(serveErr))
+			}
+		}()
+
+		logger.Info("metrics server listening", zap.String("metrics", cfg.Metrics.String()))
+	}
+	return telemetry, nil
 }
