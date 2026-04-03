@@ -1,6 +1,10 @@
 # Bifrost
 
-A weighted multi-interface TCP reverse proxy for bypassing system routing.
+<p align="center">
+  <img src="docs/assets/dashboard.png" alt="metrics dashboard" />
+</p>
+
+A weighted multi-interface TCP reverse proxy for bypassing system routing and using multiple iFaces concurrently.
 
 Bifrost allows you to distribute outbound TCP connections across multiple network interfaces with configurable weights. This enables bandwidth aggregation and higher concurrency by utilizing all available network paths simultaneously.
 
@@ -15,8 +19,9 @@ Bifrost allows you to distribute outbound TCP connections across multiple networ
 
 ## Use Cases
 
-* Combine LAN + WiFi + USB tethering
+* Combine LAN + WiFi + Multiple USB tethering
 * Maximize download throughput from a single server
+* Maximize internet throughput using a socks proxy
 * Increase parallel connection limits
 * Control traffic distribution per interface
 * Work around restrictive routing policies
@@ -132,4 +137,6 @@ Traffic will be distributed across eth0 and eth1 according to weights.
 * Interface health monitoring
 * Dynamic weight adjustment (reputation)
 * Failover handling
-* UDP support
+* Max traffic per interface
+* Max connections per interface
+* Connection pool
