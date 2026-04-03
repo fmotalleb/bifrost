@@ -12,6 +12,7 @@ type Config struct {
 	Listen  netip.AddrPort   `mapstructure:"listen"`
 	Server  netip.AddrPort   `mapstructure:"server"`
 	Metrics netip.AddrPort   `mapstructure:"metrics"`
+	Socks   SocksConfig      `mapstructure:"socks"`
 	Cache   CacheConfig      `mapstructure:"cache"`
 	IFaces  map[string]Iface `mapstructure:"ifaces" validate:"required"`
 }
@@ -26,4 +27,11 @@ type CacheConfig struct {
 type Iface struct {
 	Weight   int    `mapstructure:"weight" validate:"gt=0"`
 	SourceIP net.IP `mapstructure:"source_ip"`
+}
+
+// SocksConfig controls optional SOCKS5 authentication settings.
+type SocksConfig struct {
+	Listen   netip.AddrPort `mapstructure:"listen"`
+	Username string         `mapstructure:"username"`
+	Password string         `mapstructure:"password"`
 }

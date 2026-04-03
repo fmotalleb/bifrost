@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/go-playground/validator/v10"
 )
@@ -40,6 +41,12 @@ func Validate(cfg Config) error {
 
 	if len(cfg.IFaces) == 0 {
 		return errors.New("ifaces must contain at least one interface")
+	}
+
+	usernameSet := strings.TrimSpace(cfg.Socks.Username) != ""
+	passwordSet := strings.TrimSpace(cfg.Socks.Password) != ""
+	if usernameSet != passwordSet {
+		return errors.New("socks.username and socks.password must be set together")
 	}
 
 	for name, iface := range cfg.IFaces {

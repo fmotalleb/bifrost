@@ -2,6 +2,13 @@ listen: 127.0.0.1:8060
 server: 192.168.1.2:8060
 metrics: 0.0.0.0:3000
 
+socks:
+  # Optional SOCKS5 listen address for `bifrost socks`
+  # listen: 127.0.0.1:1080
+  # Optional SOCKS5 authentication for `bifrost socks`
+  # username: myuser
+  # password: mypass
+
 cache:
   # TTL for interface IP lookups (ignored when prefetch=true)
   ttl: 30s

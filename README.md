@@ -57,6 +57,13 @@ listen: 127.0.0.1:8080
 server: 94.93.92.91:8080
 metrics: 0.0.0.0:3000
 
+socks:
+  # optional socks5 listen address for `bifrost socks`
+  # listen: 127.0.0.1:1080
+  # optional socks5 auth (used by `bifrost socks`)
+  # username: myuser
+  # password: mypass
+
 cache:
   ttl: 30s
   prefetch: false
@@ -76,6 +83,8 @@ ifaces:
 * listen: local address to accept incoming connections
 * server: upstream target address
 * metrics: optional metrics/dashboard listener; when set, exposes `/metrics`, `/api/snapshot`, and `/`
+* socks.listen: optional SOCKS5 listen address for `bifrost socks`
+* socks.username / socks.password: optional SOCKS5 username/password auth; both must be set together
 * cache.ttl: TTL for interface IP lookup cache (for example: `30s`, `5m`, `0s`)
 * cache.prefetch: when `true`, resolve interface IPs at startup and keep them permanently (no per-connection lookup)
 * ifaces: map of network interfaces
@@ -124,6 +133,27 @@ bifrost --config config.yaml
 
 Then connect clients to `127.0.0.1:8080`
 Traffic will be distributed across eth0 and eth1 according to weights.
+
+## SOCKS5 Mode
+
+You can run Bifrost as a local SOCKS5 proxy that ignores the `server` target and routes each CONNECT request through selected interfaces.
+
+Run:
+
+```bash
+bifrost socks --config config.yaml --socks 127.0.0.1:1080
+```
+
+Then configure your client to use SOCKS5 on the SOCKS listen address (default `127.0.0.1:1080`).
+Each outbound destination requested via SOCKS is distributed across configured interfaces using the same weighted scheduler.
+
+To require SOCKS5 authentication, set both:
+
+```yaml
+socks:
+  username: myuser
+  password: mypass
+```
 
 ## Limitations
 
