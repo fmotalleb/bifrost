@@ -25,10 +25,11 @@ Bifrost allows you to distribute outbound TCP connections across multiple networ
 
 Each incoming connection is proxied to the upstream server using one selected network interface.
 
-Interface selection is based on configured weights:
+Interface selection is based on configured weights and current active load:
 
-* Higher weight = higher probability of being selected
-* Selection is proportional across all defined interfaces
+* Higher weight allows proportionally more concurrent active connections
+* New connections are assigned to the interface with the lowest active/weight ratio
+* Ties are broken randomly
 
 Example:
 
@@ -37,8 +38,8 @@ Example:
 
 Result:
 
-* eth0 is used approximately 2 out of 7 times
-* eth1 is used approximately 5 out of 7 times
+* eth0 is allowed about 2/7 of active concurrent connections
+* eth1 is allowed about 5/7 of active concurrent connections
 
 This applies per connection, not per packet.
 
@@ -80,7 +81,7 @@ Each interface:
 ## Behavior
 
 * Each new connection is assigned an interface
-* Interface selection is weighted and per-connection
+* Interface selection is weighted by active load and per-connection
 * Traffic flows entirely through that interface
 * If `source_ip` is set for the selected interface, that IP is used for outbound bind
 * Otherwise, bind IP is resolved from the interface and cached according to `cache.ttl`

@@ -156,6 +156,7 @@ func (s *Server) handleConnection(ctx context.Context, id uint64, clientConn net
 		logger.Warn("failed to select interface", zap.Uint64("connection_id", id), zap.Error(err))
 		return
 	}
+	defer s.selector.Release(ifaceName)
 
 	binding, ok := s.ifaceBindings[ifaceName]
 	if !ok {
