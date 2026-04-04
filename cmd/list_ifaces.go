@@ -15,6 +15,7 @@ import (
 var (
 	detailedIfaces bool
 	jsonIfaces     bool
+	allIfaces      bool
 )
 
 const ifaceFlagsCapacity = 6
@@ -33,6 +34,8 @@ var listIfacesCmd = &cobra.Command{
 			return ifaces[i].Name < ifaces[j].Name
 		})
 
+		ifaces = filterIfaces(ifaces, allIfaces)
+
 		if jsonIfaces {
 			return printIfacesJSON(cmd, ifaces, detailedIfaces)
 		}
@@ -43,6 +46,21 @@ var listIfacesCmd = &cobra.Command{
 
 		return printIfaceNames(cmd, ifaces)
 	},
+}
+
+func filterIfaces(ifaces []net.Interface, includeAll bool) []net.Interface {
+	if includeAll {
+		return ifaces
+	}
+
+	filtered := make([]net.Interface, 0, len(ifaces))
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp != 0 {
+			filtered = append(filtered, iface)
+		}
+	}
+
+	return filtered
 }
 
 func init() {
@@ -58,6 +76,13 @@ func init() {
 		"json",
 		false,
 		"output in JSON format",
+	)
+	listIfacesCmd.Flags().BoolVarP(
+		&allIfaces,
+		"all",
+		"a",
+		false,
+		"output all interfaces, whether they are up or down",
 	)
 }
 
