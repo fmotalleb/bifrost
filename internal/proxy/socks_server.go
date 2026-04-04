@@ -136,43 +136,24 @@ func (c *monitoredSOCKSTargetConn) release(success bool) {
 	})
 }
 
-type socksDialRoute struct {
-	ifaceName string
-	binding   ifaceBinding
-	bindIP    net.IP
-}
-
-func (s *SOCKSServer) selectDialRoute(addr string) (socksDialRoute, error) {
-	ifaceName, err := s.selector.Pick()
+func (s *SOCKSServer) selectDialRoute(addr string) (selectedRoute, error) {
+	route, err := selectBindRoute(
+		s.selector,
+		s.ifaceBindings,
+		s.ipCache,
+		func(binding ifaceBinding) bool {
+			if binding.sourceIP != nil {
+				return true
+			}
+			return prefersIPv4Dial(addr)
+		},
+	)
 	if err != nil {
-		s.telemetry.ObserveConnection("", false, 0, 0)
-		return socksDialRoute{}, fmt.Errorf("select interface: %w", err)
+		s.telemetry.ObserveConnection(route.ifaceName, false, 0, 0)
+		return selectedRoute{}, err
 	}
 
-	binding, ok := s.ifaceBindings[ifaceName]
-	if !ok {
-		s.selector.Release(ifaceName)
-		s.telemetry.ObserveConnection(ifaceName, false, 0, 0)
-		return socksDialRoute{}, fmt.Errorf("missing cached interface binding for %q", ifaceName)
-	}
-
-	preferIPv4 := true
-	if binding.sourceIP == nil {
-		preferIPv4 = prefersIPv4Dial(addr)
-	}
-
-	bindIP, err := s.ipCache.GetBindIP(binding, preferIPv4)
-	if err != nil {
-		s.selector.Release(ifaceName)
-		s.telemetry.ObserveConnection(ifaceName, false, 0, 0)
-		return socksDialRoute{}, fmt.Errorf("resolve bind ip for %q: %w", ifaceName, err)
-	}
-
-	return socksDialRoute{
-		ifaceName: ifaceName,
-		binding:   binding,
-		bindIP:    bindIP,
-	}, nil
+	return route, nil
 }
 
 func (s *SOCKSServer) buildDialer(serverCtx context.Context) func(context.Context, string, string) (net.Conn, error) {

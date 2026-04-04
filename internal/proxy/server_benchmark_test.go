@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"fmt"
 	"net"
 	"testing"
 
@@ -43,23 +42,17 @@ func benchmarkReverseProxyServer(ip1, ip2, ip3, ip4 string) *Server {
 }
 
 func selectReverseProxyRouteForBenchmark(s *Server, preferIPv4 bool) (string, error) {
-	ifaceName, err := s.selector.Pick()
+	route, err := selectBindRoute(
+		s.selector,
+		s.ifaceBindings,
+		s.ipCache,
+		func(_ ifaceBinding) bool { return preferIPv4 },
+	)
 	if err != nil {
-		return "", fmt.Errorf("select interface: %w", err)
+		return "", err
 	}
 
-	binding, ok := s.ifaceBindings[ifaceName]
-	if !ok {
-		s.selector.Release(ifaceName)
-		return "", fmt.Errorf("missing cached interface binding for %q", ifaceName)
-	}
-
-	if _, err := s.ipCache.GetBindIP(binding, preferIPv4); err != nil {
-		s.selector.Release(ifaceName)
-		return "", fmt.Errorf("resolve bind ip for %q: %w", ifaceName, err)
-	}
-
-	return ifaceName, nil
+	return route.ifaceName, nil
 }
 
 func BenchmarkReverseProxySelectRouteIPv4(b *testing.B) {

@@ -148,48 +148,42 @@ func (s *Server) handleConnection(ctx context.Context, id uint64, clientConn net
 	logger := log.Of(ctx)
 	defer clientConn.Close()
 
-	ifaceName, err := s.selector.Pick()
+	route, err := selectBindRoute(
+		s.selector,
+		s.ifaceBindings,
+		s.ipCache,
+		func(_ ifaceBinding) bool { return s.cfg.Server.Addr().Is4() },
+	)
 	if err != nil {
+		if route.ifaceName != "" {
+			s.telemetry.ObserveConnection(route.ifaceName, false, 0, 0)
+			logger.Warn("failed to resolve route",
+				zap.Uint64("connection_id", id),
+				zap.String("iface", route.ifaceName),
+				zap.Error(err),
+			)
+			return
+		}
 		logger.Warn("failed to select interface", zap.Uint64("connection_id", id), zap.Error(err))
 		return
 	}
-	defer s.selector.Release(ifaceName)
+	defer s.selector.Release(route.ifaceName)
 
 	var txBytes int64
 	var rxBytes int64
 	var success bool
 	defer func() {
-		s.telemetry.ObserveConnection(ifaceName, success, txBytes, rxBytes)
+		s.telemetry.ObserveConnection(route.ifaceName, success, txBytes, rxBytes)
 	}()
 
-	binding, ok := s.ifaceBindings[ifaceName]
-	if !ok {
-		logger.Warn("missing cached interface binding",
-			zap.Uint64("connection_id", id),
-			zap.String("iface", ifaceName),
-		)
-		return
-	}
-
-	bindIP, err := s.ipCache.GetBindIP(binding, s.cfg.Server.Addr().Is4())
-	if err != nil {
-		logger.Warn("failed to resolve interface ip",
-			zap.Uint64("connection_id", id),
-			zap.String("iface", ifaceName),
-			zap.Int("iface_index", binding.index),
-			zap.Error(err),
-		)
-		return
-	}
-
-	dialer := net.Dialer{LocalAddr: &net.TCPAddr{IP: bindIP}}
+	dialer := net.Dialer{LocalAddr: &net.TCPAddr{IP: route.bindIP}}
 	upstreamConn, err := dialer.DialContext(ctx, "tcp", s.cfg.Server.String())
 	if err != nil {
 		logger.Warn("failed to dial upstream",
 			zap.Uint64("connection_id", id),
-			zap.String("iface", ifaceName),
-			zap.Int("iface_index", binding.index),
-			zap.String("bind_ip", bindIP.String()),
+			zap.String("iface", route.ifaceName),
+			zap.Int("iface_index", route.binding.index),
+			zap.String("bind_ip", route.bindIP.String()),
 			zap.Error(err),
 		)
 		return
@@ -200,14 +194,14 @@ func (s *Server) handleConnection(ctx context.Context, id uint64, clientConn net
 	logger.Info("accepted connection",
 		zap.Uint64("connection_id", id),
 		zap.String("client", clientConn.RemoteAddr().String()),
-		zap.String("iface", ifaceName),
-		zap.Int("iface_index", binding.index),
-		zap.String("bind_ip", bindIP.String()),
+		zap.String("iface", route.ifaceName),
+		zap.Int("iface_index", route.binding.index),
+		zap.String("bind_ip", route.bindIP.String()),
 		zap.String("upstream", s.cfg.Server.String()),
 	)
 
 	stats, proxyErr := pipeBothWays(clientConn, upstreamConn, func(direction string, bytes int64) {
-		s.telemetry.AddTransfer(ifaceName, direction, bytes)
+		s.telemetry.AddTransfer(route.ifaceName, direction, bytes)
 	})
 	txBytes = stats.clientToUpstream
 	rxBytes = stats.upstreamToClient
