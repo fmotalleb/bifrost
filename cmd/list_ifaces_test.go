@@ -52,7 +52,7 @@ func TestPrintIfacesJSONNames(t *testing.T) {
 	command := &cobra.Command{}
 	command.SetOut(&out)
 
-	ifaces := []net.Interface{{Name: "eth0"}, {Name: "wlan0"}}
+	ifaces := []ifaceInfo{{Name: "eth0"}, {Name: "wlan0"}}
 	if err := printIfacesJSON(command, ifaces, false); err != nil {
 		t.Fatalf("printIfacesJSON returned error: %v", err)
 	}
