@@ -171,6 +171,8 @@ func (s *Server) handleConnection(ctx context.Context, id uint64, clientConn net
 	}
 	defer s.selector.Release(route.ifaceName)
 	defer upstreamConn.Close()
+	s.telemetry.AddActiveConnections(route.ifaceName, 1)
+	defer s.telemetry.AddActiveConnections(route.ifaceName, -1)
 
 	var txBytes int64
 	var rxBytes int64

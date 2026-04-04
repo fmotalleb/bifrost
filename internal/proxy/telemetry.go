@@ -10,12 +10,14 @@ const (
 // Telemetry receives proxy connection and transfer observations.
 type Telemetry interface {
 	AddTransfer(iface string, direction string, bytes int64)
+	AddActiveConnections(iface string, delta int64)
 	ObserveConnection(iface string, success bool, txBytes, rxBytes int64)
 }
 
 type noopTelemetry struct{}
 
 func (noopTelemetry) AddTransfer(_ string, _ string, _ int64) {}
+func (noopTelemetry) AddActiveConnections(_ string, _ int64)    {}
 
 func (noopTelemetry) ObserveConnection(_ string, _ bool, _, _ int64) {}
 

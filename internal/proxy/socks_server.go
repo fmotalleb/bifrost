@@ -140,6 +140,7 @@ func (c *monitoredSOCKSTargetConn) Close() error {
 func (c *monitoredSOCKSTargetConn) release(success bool) {
 	c.released.Do(func() {
 		c.selector.Release(c.ifaceName)
+		c.telemetry.AddActiveConnections(c.ifaceName, -1)
 		c.telemetry.ObserveConnection(c.ifaceName, success, c.txBytes.Load(), c.rxBytes.Load())
 	})
 }
@@ -202,6 +203,7 @@ func (s *SOCKSServer) buildDialer(serverCtx context.Context) func(context.Contex
 			zap.Int("iface_index", route.binding.index),
 			zap.String("bind_ip", route.bindIP.String()),
 		)
+		s.telemetry.AddActiveConnections(route.ifaceName, 1)
 
 		return &monitoredSOCKSTargetConn{
 			Conn:      targetConn,

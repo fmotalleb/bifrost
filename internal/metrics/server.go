@@ -36,25 +36,28 @@ type ifaceCounters struct {
 	failed  uint64
 	txBytes uint64
 	rxBytes uint64
+	active  int64
 }
 
 // IfaceSnapshot is the dashboard/API view for one interface.
 type IfaceSnapshot struct {
-	Name    string `json:"name"`
-	Success uint64 `json:"success"`
-	Failed  uint64 `json:"failed"`
-	TXBytes uint64 `json:"tx_bytes"`
-	RXBytes uint64 `json:"rx_bytes"`
+	Name              string `json:"name"`
+	Success           uint64 `json:"success"`
+	Failed            uint64 `json:"failed"`
+	TXBytes           uint64 `json:"tx_bytes"`
+	RXBytes           uint64 `json:"rx_bytes"`
+	ActiveConnections int64  `json:"active_connections"`
 }
 
 // Snapshot is a point-in-time metrics summary used by the dashboard.
 type Snapshot struct {
-	GeneratedAt  time.Time       `json:"generated_at"`
-	TotalSuccess uint64          `json:"total_success"`
-	TotalFailed  uint64          `json:"total_failed"`
-	TotalTXBytes uint64          `json:"total_tx_bytes"`
-	TotalRXBytes uint64          `json:"total_rx_bytes"`
-	Ifaces       []IfaceSnapshot `json:"ifaces"`
+	GeneratedAt             time.Time       `json:"generated_at"`
+	TotalSuccess            uint64          `json:"total_success"`
+	TotalFailed             uint64          `json:"total_failed"`
+	TotalTXBytes            uint64          `json:"total_tx_bytes"`
+	TotalRXBytes            uint64          `json:"total_rx_bytes"`
+	TotalActiveConnections  int64           `json:"total_active_connections"`
+	Ifaces                  []IfaceSnapshot `json:"ifaces"`
 }
 
 // Recorder records proxy telemetry and exports Prometheus metrics.
@@ -62,12 +65,15 @@ type Recorder struct {
 	failedConnections    *prometheus.CounterVec
 	successConnections   *prometheus.CounterVec
 	transferBytesTotal   *prometheus.CounterVec
+	activeConnections    *prometheus.GaugeVec
+	totalActiveGauge     prometheus.Gauge
 	txBytesPerConnection *prometheus.HistogramVec
 	rxBytesPerConnection *prometheus.HistogramVec
 	totalSuccess         atomic.Uint64
 	totalFailed          atomic.Uint64
 	totalTXBytes         atomic.Uint64
 	totalRXBytes         atomic.Uint64
+	totalActive          int64
 	mu                   sync.RWMutex
 	ifaceCountersByName  map[string]*ifaceCounters
 }
@@ -97,6 +103,21 @@ func newRecorder(ifaces []string, registerer prometheus.Registerer) *Recorder {
 				Help:      "Total transferred bytes observed on proxy streams by interface and direction.",
 			},
 			[]string{"iface", "direction"},
+		),
+		activeConnections: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: "bifrost",
+				Name:      "active_connections",
+				Help:      "Current active proxied connections grouped by selected interface.",
+			},
+			[]string{"iface"},
+		),
+		totalActiveGauge: prometheus.NewGauge(
+			prometheus.GaugeOpts{
+				Namespace: "bifrost",
+				Name:      "active_connections_total",
+				Help:      "Current total active proxied connections across all interfaces.",
+			},
 		),
 		txBytesPerConnection: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
@@ -131,6 +152,8 @@ func newRecorder(ifaces []string, registerer prometheus.Registerer) *Recorder {
 		recorder.failedConnections,
 		recorder.successConnections,
 		recorder.transferBytesTotal,
+		recorder.activeConnections,
+		recorder.totalActiveGauge,
 		recorder.txBytesPerConnection,
 		recorder.rxBytesPerConnection,
 	)
@@ -144,7 +167,9 @@ func newRecorder(ifaces []string, registerer prometheus.Registerer) *Recorder {
 		recorder.successConnections.WithLabelValues(name).Add(0)
 		recorder.transferBytesTotal.WithLabelValues(name, proxy.DirectionTX).Add(0)
 		recorder.transferBytesTotal.WithLabelValues(name, proxy.DirectionRX).Add(0)
+		recorder.activeConnections.WithLabelValues(name).Set(0)
 	}
+	recorder.totalActiveGauge.Set(0)
 
 	return recorder
 }
@@ -181,6 +206,7 @@ func (r *Recorder) counterFor(iface string) *ifaceCounters {
 	r.successConnections.WithLabelValues(name).Add(0)
 	r.transferBytesTotal.WithLabelValues(name, proxy.DirectionTX).Add(0)
 	r.transferBytesTotal.WithLabelValues(name, proxy.DirectionRX).Add(0)
+	r.activeConnections.WithLabelValues(name).Set(0)
 	return counter
 }
 
@@ -205,6 +231,31 @@ func (r *Recorder) AddTransfer(iface string, direction string, bytes int64) {
 	}
 
 	r.transferBytesTotal.WithLabelValues(name, direction).Add(float64(bytes))
+}
+
+// AddActiveConnections records current active proxied connections by interface and in total.
+func (r *Recorder) AddActiveConnections(iface string, delta int64) {
+	if delta == 0 {
+		return
+	}
+	name := normalizeIface(iface)
+	counter := r.counterFor(name)
+
+	r.mu.Lock()
+	counter.active += delta
+	if counter.active < 0 {
+		counter.active = 0
+	}
+	r.totalActive += delta
+	if r.totalActive < 0 {
+		r.totalActive = 0
+	}
+	ifaceActive := counter.active
+	totalActive := r.totalActive
+	r.mu.Unlock()
+
+	r.activeConnections.WithLabelValues(name).Set(float64(ifaceActive))
+	r.totalActiveGauge.Set(float64(totalActive))
 }
 
 // ObserveConnection records per-connection success/failure and byte histograms.
@@ -242,6 +293,7 @@ func (r *Recorder) Snapshot() Snapshot {
 	}
 
 	r.mu.RLock()
+	snapshot.TotalActiveConnections = r.totalActive
 	ifaceNames := make([]string, 0, len(r.ifaceCountersByName))
 	for iface := range r.ifaceCountersByName {
 		ifaceNames = append(ifaceNames, iface)
@@ -250,11 +302,12 @@ func (r *Recorder) Snapshot() Snapshot {
 	for _, name := range ifaceNames {
 		counter := r.ifaceCountersByName[name]
 		snapshot.Ifaces = append(snapshot.Ifaces, IfaceSnapshot{
-			Name:    name,
-			Success: atomic.LoadUint64(&counter.success),
-			Failed:  atomic.LoadUint64(&counter.failed),
-			TXBytes: atomic.LoadUint64(&counter.txBytes),
-			RXBytes: atomic.LoadUint64(&counter.rxBytes),
+			Name:              name,
+			Success:           atomic.LoadUint64(&counter.success),
+			Failed:            atomic.LoadUint64(&counter.failed),
+			TXBytes:           atomic.LoadUint64(&counter.txBytes),
+			RXBytes:           atomic.LoadUint64(&counter.rxBytes),
+			ActiveConnections: counter.active,
 		})
 	}
 	r.mu.RUnlock()
@@ -467,6 +520,7 @@ const dashboardHTML = `<!doctype html>
     </div>
 
     <div class="cards">
+      <div class="card"><div class="k">Active Connections</div><div class="v mono" id="activeCount">0</div></div>
       <div class="card"><div class="k">Success Rate</div><div class="v" id="successRate">-</div></div>
       <div class="card"><div class="k">Successful Connections</div><div class="v good mono" id="successCount">0</div></div>
       <div class="card"><div class="k">Failed Connections</div><div class="v bad mono" id="failedCount">0</div></div>
@@ -480,6 +534,7 @@ const dashboardHTML = `<!doctype html>
         <thead>
           <tr>
             <th>Interface</th>
+            <th>Active</th>
             <th>Success</th>
             <th>Failed</th>
             <th>Success Rate</th>
@@ -547,6 +602,7 @@ const dashboardHTML = `<!doctype html>
       }
 
       document.getElementById("updatedAt").textContent = "Last update: " + new Date(snapshot.generated_at).toLocaleTimeString();
+      document.getElementById("activeCount").textContent = snapshot.total_active_connections.toLocaleString();
       document.getElementById("successCount").textContent = snapshot.total_success.toLocaleString();
       document.getElementById("failedCount").textContent = snapshot.total_failed.toLocaleString();
       document.getElementById("successRate").textContent = pct(snapshot.total_success, snapshot.total_failed);
@@ -565,6 +621,7 @@ const dashboardHTML = `<!doctype html>
         rows.push(
           "<tr>" +
           "<td class='mono'>" + iface.name + "</td>" +
+          "<td class='mono'>" + iface.active_connections.toLocaleString() + "</td>" +
           "<td class='mono'>" + iface.success.toLocaleString() + "</td>" +
           "<td class='mono'>" + iface.failed.toLocaleString() + "</td>" +
           "<td class='mono'>" + pct(iface.success, iface.failed) + "</td>" +
