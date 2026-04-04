@@ -9,12 +9,13 @@ import (
 
 // Config contains the runtime settings for bifrost.
 type Config struct {
-	Listen  netip.AddrPort   `mapstructure:"listen"`
-	Server  netip.AddrPort   `mapstructure:"server"`
-	Metrics netip.AddrPort   `mapstructure:"metrics"`
-	Socks   SocksConfig      `mapstructure:"socks"`
-	Cache   CacheConfig      `mapstructure:"cache"`
-	IFaces  map[string]Iface `mapstructure:"ifaces" validate:"required"`
+	Listen           netip.AddrPort   `mapstructure:"listen"`
+	Server           netip.AddrPort   `mapstructure:"server"`
+	Metrics          netip.AddrPort   `mapstructure:"metrics"`
+	FailoverAttempts int              `mapstructure:"failover_attempts" validate:"gte=0"`
+	Socks            SocksConfig      `mapstructure:"socks"`
+	Cache            CacheConfig      `mapstructure:"cache"`
+	IFaces           map[string]Iface `mapstructure:"ifaces" validate:"required"`
 }
 
 // CacheConfig controls source IP lookup caching behavior.

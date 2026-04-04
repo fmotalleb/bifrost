@@ -161,16 +161,29 @@ func (s *SOCKSServer) buildDialer(serverCtx context.Context) func(context.Contex
 
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		id := s.connID.Add(1)
-		route, err := s.selectDialRoute(addr)
+		route, targetConn, err := dialWithFailover(
+			ctx,
+			s.selector,
+			s.ifaceBindings,
+			s.ipCache,
+			func(binding ifaceBinding) bool {
+				if binding.sourceIP != nil {
+					return true
+				}
+				return prefersIPv4Dial(addr)
+			},
+			failoverAttempts(s.cfg.FailoverAttempts, len(s.ifaceBindings)),
+			func(ctx context.Context, bindIP net.IP) (net.Conn, error) {
+				dialer := net.Dialer{LocalAddr: &net.TCPAddr{IP: bindIP}}
+				return dialer.DialContext(ctx, network, addr)
+			},
+			func(route selectedRoute, _ error) {
+				if route.ifaceName != "" {
+					s.telemetry.ObserveConnection(route.ifaceName, false, 0, 0)
+				}
+			},
+		)
 		if err != nil {
-			return nil, err
-		}
-
-		dialer := net.Dialer{LocalAddr: &net.TCPAddr{IP: route.bindIP}}
-		targetConn, err := dialer.DialContext(ctx, network, addr)
-		if err != nil {
-			s.selector.Release(route.ifaceName)
-			s.telemetry.ObserveConnection(route.ifaceName, false, 0, 0)
 			return nil, err
 		}
 

@@ -1,6 +1,9 @@
 listen: 127.0.0.1:8060
 server: 192.168.1.2:8060
 metrics: 0.0.0.0:3000
+# Number of outbound dial attempts per request.
+# 0 = use default failover attempts (currently 2).
+failover_attempts: 2
 
 socks:
   # Optional SOCKS5 listen address for `bifrost socks`

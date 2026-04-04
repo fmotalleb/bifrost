@@ -56,6 +56,7 @@ Example configuration:
 listen: 127.0.0.1:8080
 server: 94.93.92.91:8080
 metrics: 0.0.0.0:3000
+failover_attempts: 2
 
 socks:
   # optional socks5 listen address for `bifrost socks`
@@ -83,6 +84,7 @@ ifaces:
 * listen: local address to accept incoming connections
 * server: upstream target address
 * metrics: optional metrics/dashboard listener; when set, exposes `/metrics`, `/api/snapshot`, and `/`
+* failover_attempts: outbound dial attempts per request; `0` uses built-in default (`2`)
 * socks.listen: optional SOCKS5 listen address for `bifrost socks`
 * socks.username / socks.password: optional SOCKS5 username/password auth; both must be set together
 * cache.ttl: TTL for interface IP lookup cache (for example: `30s`, `5m`, `0s`)
@@ -102,6 +104,7 @@ Each interface:
 * If `source_ip` is set for the selected interface, that IP is used for outbound bind
 * Otherwise, bind IP is resolved from the interface and cached according to `cache.ttl`
 * With `cache.prefetch: true`, bind IPs are prefetched once at startup and reused
+* If upstream dial fails, Bifrost retries on another route up to `failover_attempts`
 * No packet-level balancing
 * No kernel bonding required
 
@@ -166,7 +169,6 @@ socks:
 
 * Interface health monitoring
 * Dynamic weight adjustment (reputation)
-* Failover handling
 * Max traffic per interface
 * Max connections per interface
 * Connection pool

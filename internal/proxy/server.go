@@ -148,26 +148,29 @@ func (s *Server) handleConnection(ctx context.Context, id uint64, clientConn net
 	logger := log.Of(ctx)
 	defer clientConn.Close()
 
-	route, err := selectBindRoute(
+	route, upstreamConn, err := dialWithFailover(
+		ctx,
 		s.selector,
 		s.ifaceBindings,
 		s.ipCache,
 		func(_ ifaceBinding) bool { return s.cfg.Server.Addr().Is4() },
+		failoverAttempts(s.cfg.FailoverAttempts, len(s.ifaceBindings)),
+		func(ctx context.Context, bindIP net.IP) (net.Conn, error) {
+			dialer := net.Dialer{LocalAddr: &net.TCPAddr{IP: bindIP}}
+			return dialer.DialContext(ctx, "tcp", s.cfg.Server.String())
+		},
+		func(route selectedRoute, _ error) {
+			if route.ifaceName != "" {
+				s.telemetry.ObserveConnection(route.ifaceName, false, 0, 0)
+			}
+		},
 	)
 	if err != nil {
-		if route.ifaceName != "" {
-			s.telemetry.ObserveConnection(route.ifaceName, false, 0, 0)
-			logger.Warn("failed to resolve route",
-				zap.Uint64("connection_id", id),
-				zap.String("iface", route.ifaceName),
-				zap.Error(err),
-			)
-			return
-		}
-		logger.Warn("failed to select interface", zap.Uint64("connection_id", id), zap.Error(err))
+		logger.Warn("failed to dial upstream route", zap.Uint64("connection_id", id), zap.Error(err))
 		return
 	}
 	defer s.selector.Release(route.ifaceName)
+	defer upstreamConn.Close()
 
 	var txBytes int64
 	var rxBytes int64
@@ -176,19 +179,6 @@ func (s *Server) handleConnection(ctx context.Context, id uint64, clientConn net
 		s.telemetry.ObserveConnection(route.ifaceName, success, txBytes, rxBytes)
 	}()
 
-	dialer := net.Dialer{LocalAddr: &net.TCPAddr{IP: route.bindIP}}
-	upstreamConn, err := dialer.DialContext(ctx, "tcp", s.cfg.Server.String())
-	if err != nil {
-		logger.Warn("failed to dial upstream",
-			zap.Uint64("connection_id", id),
-			zap.String("iface", route.ifaceName),
-			zap.Int("iface_index", route.binding.index),
-			zap.String("bind_ip", route.bindIP.String()),
-			zap.Error(err),
-		)
-		return
-	}
-	defer upstreamConn.Close()
 	success = true
 
 	logger.Info("accepted connection",

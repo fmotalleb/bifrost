@@ -59,3 +59,13 @@ func TestValidateSourceIPRules(t *testing.T) {
 		t.Fatalf("expected source_ip unspecified error, got: %v", err)
 	}
 }
+
+func TestValidateFailoverAttempts(t *testing.T) {
+	cfg := validConfig()
+	cfg.FailoverAttempts = -1
+
+	err := Validate(cfg)
+	if err == nil || !strings.Contains(err.Error(), "failover_attempts must be zero or greater") {
+		t.Fatalf("expected failover_attempts validation error, got: %v", err)
+	}
+}
