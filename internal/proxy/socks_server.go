@@ -136,51 +136,74 @@ func (c *monitoredSOCKSTargetConn) release(success bool) {
 	})
 }
 
+type socksDialRoute struct {
+	ifaceName string
+	binding   ifaceBinding
+	bindIP    net.IP
+}
+
+func (s *SOCKSServer) selectDialRoute(addr string) (socksDialRoute, error) {
+	ifaceName, err := s.selector.Pick()
+	if err != nil {
+		s.telemetry.ObserveConnection("", false, 0, 0)
+		return socksDialRoute{}, fmt.Errorf("select interface: %w", err)
+	}
+
+	binding, ok := s.ifaceBindings[ifaceName]
+	if !ok {
+		s.selector.Release(ifaceName)
+		s.telemetry.ObserveConnection(ifaceName, false, 0, 0)
+		return socksDialRoute{}, fmt.Errorf("missing cached interface binding for %q", ifaceName)
+	}
+
+	preferIPv4 := true
+	if binding.sourceIP == nil {
+		preferIPv4 = prefersIPv4Dial(addr)
+	}
+
+	bindIP, err := s.ipCache.GetBindIP(binding, preferIPv4)
+	if err != nil {
+		s.selector.Release(ifaceName)
+		s.telemetry.ObserveConnection(ifaceName, false, 0, 0)
+		return socksDialRoute{}, fmt.Errorf("resolve bind ip for %q: %w", ifaceName, err)
+	}
+
+	return socksDialRoute{
+		ifaceName: ifaceName,
+		binding:   binding,
+		bindIP:    bindIP,
+	}, nil
+}
+
 func (s *SOCKSServer) buildDialer(serverCtx context.Context) func(context.Context, string, string) (net.Conn, error) {
 	logger := toolLog.Of(serverCtx)
 
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		id := s.connID.Add(1)
-		ifaceName, err := s.selector.Pick()
+		route, err := s.selectDialRoute(addr)
 		if err != nil {
-			s.telemetry.ObserveConnection("", false, 0, 0)
-			return nil, fmt.Errorf("select interface: %w", err)
+			return nil, err
 		}
 
-		binding, ok := s.ifaceBindings[ifaceName]
-		if !ok {
-			s.selector.Release(ifaceName)
-			s.telemetry.ObserveConnection(ifaceName, false, 0, 0)
-			return nil, fmt.Errorf("missing cached interface binding for %q", ifaceName)
-		}
-
-		preferIPv4 := prefersIPv4Dial(addr)
-		bindIP, err := s.ipCache.GetBindIP(binding, preferIPv4)
-		if err != nil {
-			s.selector.Release(ifaceName)
-			s.telemetry.ObserveConnection(ifaceName, false, 0, 0)
-			return nil, fmt.Errorf("resolve bind ip for %q: %w", ifaceName, err)
-		}
-
-		dialer := net.Dialer{LocalAddr: &net.TCPAddr{IP: bindIP}}
+		dialer := net.Dialer{LocalAddr: &net.TCPAddr{IP: route.bindIP}}
 		targetConn, err := dialer.DialContext(ctx, network, addr)
 		if err != nil {
-			s.selector.Release(ifaceName)
-			s.telemetry.ObserveConnection(ifaceName, false, 0, 0)
+			s.selector.Release(route.ifaceName)
+			s.telemetry.ObserveConnection(route.ifaceName, false, 0, 0)
 			return nil, err
 		}
 
 		logger.Debug("socks connected target via interface",
 			zap.Uint64("connection_id", id),
 			zap.String("target", addr),
-			zap.String("iface", ifaceName),
-			zap.Int("iface_index", binding.index),
-			zap.String("bind_ip", bindIP.String()),
+			zap.String("iface", route.ifaceName),
+			zap.Int("iface_index", route.binding.index),
+			zap.String("bind_ip", route.bindIP.String()),
 		)
 
 		return &monitoredSOCKSTargetConn{
 			Conn:      targetConn,
-			ifaceName: ifaceName,
+			ifaceName: route.ifaceName,
 			selector:  s.selector,
 			telemetry: s.telemetry,
 		}, nil
@@ -188,10 +211,36 @@ func (s *SOCKSServer) buildDialer(serverCtx context.Context) func(context.Contex
 }
 
 func prefersIPv4Dial(addr string) bool {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
+	if addr == "" {
 		return true
 	}
+
+	host := addr
+	if host[0] == '[' {
+		end := strings.LastIndexByte(host, ']')
+		if end <= 0 {
+			return true
+		}
+		host = host[1:end]
+	} else {
+		colon := strings.LastIndexByte(host, ':')
+		if colon <= 0 {
+			return true
+		}
+		host = host[:colon]
+	}
+
+	// IPv6 literals include ':'; parse them directly.
+	if strings.IndexByte(host, ':') < 0 {
+		// Hostnames almost always resolve via IPv4 in this proxy use-case; skip ParseIP on obvious names.
+		for i := 0; i < len(host); i++ {
+			ch := host[i]
+			if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') {
+				return true
+			}
+		}
+	}
+
 	ip := net.ParseIP(host)
 	if ip == nil {
 		return true

@@ -61,22 +61,32 @@ func (s *Selector) Pick() (string, error) {
 	defer s.mu.Unlock()
 
 	selected := s.choices[0]
-	equivalent := make([]weightedChoice, 0, len(s.choices))
-	equivalent = append(equivalent, selected)
 	for _, choice := range s.choices[1:] {
 		cmp := compareLoadRatio(s.active[choice.name], choice.weight, s.active[selected.name], selected.weight)
-		switch {
-		case cmp < 0:
+		if cmp < 0 {
 			selected = choice
-			equivalent = equivalent[:0]
-			equivalent = append(equivalent, choice)
-		case cmp == 0:
-			equivalent = append(equivalent, choice)
 		}
 	}
 
-	if len(equivalent) > 1 {
-		selected = equivalent[s.nextTie%len(equivalent)]
+	equivalentCount := 0
+	for _, choice := range s.choices {
+		if compareLoadRatio(s.active[choice.name], choice.weight, s.active[selected.name], selected.weight) == 0 {
+			equivalentCount++
+		}
+	}
+
+	if equivalentCount > 1 {
+		target := s.nextTie % equivalentCount
+		for _, choice := range s.choices {
+			if compareLoadRatio(s.active[choice.name], choice.weight, s.active[selected.name], selected.weight) != 0 {
+				continue
+			}
+			if target == 0 {
+				selected = choice
+				break
+			}
+			target--
+		}
 		s.nextTie++
 	}
 
