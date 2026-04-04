@@ -1,10 +1,10 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"strings"
@@ -52,7 +52,7 @@ func (s *SOCKSServer) Serve(ctx context.Context) error {
 	}
 
 	serverCfg := &socks5.Config{
-		Logger: log.New(io.Discard, "", 0),
+		Logger: log.New(socks5DebugLogWriter{logger: logger}, "", 0),
 		Dial:   s.buildDialer(ctx),
 	}
 
@@ -121,6 +121,14 @@ func (c *monitoredSOCKSTargetConn) Read(p []byte) (int, error) {
 		c.telemetry.AddTransfer(c.ifaceName, DirectionRX, int64(n))
 	}
 	return n, err
+}
+
+func (c *monitoredSOCKSTargetConn) CloseWrite() error {
+	closeWriter, ok := c.Conn.(interface{ CloseWrite() error })
+	if !ok {
+		return c.Conn.Close()
+	}
+	return closeWriter.CloseWrite()
 }
 
 func (c *monitoredSOCKSTargetConn) Close() error {
@@ -240,4 +248,22 @@ func prefersIPv4Dial(addr string) bool {
 		return true
 	}
 	return ip.To4() != nil
+}
+
+type socks5DebugLogWriter struct {
+	logger *zap.Logger
+}
+
+func (w socks5DebugLogWriter) Write(p []byte) (int, error) {
+	if w.logger == nil || !w.logger.Core().Enabled(zap.DebugLevel) {
+		return len(p), nil
+	}
+
+	line := string(bytes.TrimSpace(p))
+	if line == "" {
+		return len(p), nil
+	}
+
+	w.logger.Debug("socks5", zap.String("line", line))
+	return len(p), nil
 }
