@@ -34,7 +34,7 @@ func TestFilterIfaces(t *testing.T) {
 	})
 }
 
-func TestIfaceFlagLabelsAndFormatFlags(t *testing.T) {
+func TestIfaceFlagLabelsAndFormatLabels(t *testing.T) {
 	flags := net.FlagUp | net.FlagBroadcast | net.FlagMulticast
 	labels := ifaceFlagLabels(flags)
 	wantLabels := []string{"up", "broadcast", "multicast"}
@@ -42,8 +42,8 @@ func TestIfaceFlagLabelsAndFormatFlags(t *testing.T) {
 		t.Fatalf("unexpected labels: got %v want %v", labels, wantLabels)
 	}
 
-	if got := formatFlags(0); got != "-" {
-		t.Fatalf("formatFlags(0) = %q, want \"-\"", got)
+	if got := formatLabels(nil); got != "-" {
+		t.Fatalf("formatLabels(nil) = %q, want \"-\"", got)
 	}
 }
 

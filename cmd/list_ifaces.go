@@ -59,9 +59,9 @@ func collectIfaceDetails(includeAll bool) ([]ifaceInfo, error) {
 
 	details := make([]ifaceInfo, 0, len(ifaces))
 	for _, iface := range ifaces {
-		addresses, addrErr := ifaceAddresses(iface)
-		if addrErr != nil {
-			return nil, addrErr
+		addresses, err := ifaceAddresses(iface)
+		if err != nil {
+			return nil, err
 		}
 
 		mac := iface.HardwareAddr.String()
@@ -122,19 +122,15 @@ func printIfacesPlain(cmd *cobra.Command, ifaces []ifaceInfo, detailed bool) err
 				return err
 			}
 		}
-		if _, err := fmt.Fprintf(w, "name: %s\n", iface.Name); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintf(w, "index: %d\n", iface.Index); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintf(w, "mtu: %d\n", iface.MTU); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintf(w, "mac: %s\n", iface.MAC); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintf(w, "flags: %s\n", formatLabels(iface.Flags)); err != nil {
+		if _, err := fmt.Fprintf(
+			w,
+			"name: %s\nindex: %d\nmtu: %d\nmac: %s\nflags: %s\n",
+			iface.Name,
+			iface.Index,
+			iface.MTU,
+			iface.MAC,
+			formatLabels(iface.Flags),
+		); err != nil {
 			return err
 		}
 		if len(iface.Addresses) == 0 {
@@ -198,11 +194,6 @@ func printIfacesJSON(cmd *cobra.Command, ifaces []ifaceInfo, detailed bool) erro
 	}
 
 	return encoder.Encode(ifaces)
-}
-
-// formatFlags converts net flags to comma-separated labels.
-func formatFlags(flags net.Flags) string {
-	return formatLabels(ifaceFlagLabels(flags))
 }
 
 func formatLabels(labels []string) string {
