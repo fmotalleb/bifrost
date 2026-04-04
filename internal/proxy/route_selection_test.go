@@ -47,7 +47,7 @@ func TestDialWithFailoverSuccessOnSecondAttempt(t *testing.T) {
 		cache,
 		func(_ ifaceBinding) bool { return true },
 		2,
-		func(_ context.Context, _ net.IP) (net.Conn, error) {
+		func(_ context.Context, _ selectedRoute) (net.Conn, error) {
 			dialCount++
 			if dialCount == 1 {
 				return nil, errors.New("first attempt failed")
@@ -90,7 +90,7 @@ func TestDialWithFailoverExhausted(t *testing.T) {
 		cache,
 		func(_ ifaceBinding) bool { return true },
 		2,
-		func(_ context.Context, _ net.IP) (net.Conn, error) {
+		func(_ context.Context, _ selectedRoute) (net.Conn, error) {
 			return nil, errors.New("dial failed")
 		},
 		func(route selectedRoute, _ error) {

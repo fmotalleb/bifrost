@@ -61,7 +61,7 @@ func dialWithFailover(
 	cache *IPCache,
 	preferIPv4 func(binding ifaceBinding) bool,
 	attempts int,
-	dial func(ctx context.Context, bindIP net.IP) (net.Conn, error),
+	dial func(ctx context.Context, route selectedRoute) (net.Conn, error),
 	onAttemptFailure func(route selectedRoute, err error),
 ) (selectedRoute, net.Conn, error) {
 	if attempts < 1 {
@@ -78,7 +78,7 @@ func dialWithFailover(
 			return selectedRoute{}, nil, err
 		}
 
-		conn, err := dial(ctx, route.bindIP)
+		conn, err := dial(ctx, route)
 		if err == nil {
 			return route, conn, nil
 		}

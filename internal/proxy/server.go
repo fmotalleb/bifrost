@@ -155,9 +155,8 @@ func (s *Server) handleConnection(ctx context.Context, id uint64, clientConn net
 		s.ipCache,
 		func(_ ifaceBinding) bool { return s.cfg.Server.Addr().Is4() },
 		failoverAttempts(s.cfg.FailoverAttempts, len(s.ifaceBindings)),
-		func(ctx context.Context, bindIP net.IP) (net.Conn, error) {
-			dialer := net.Dialer{LocalAddr: &net.TCPAddr{IP: bindIP}}
-			return dialer.DialContext(ctx, "tcp", s.cfg.Server.String())
+		func(ctx context.Context, route selectedRoute) (net.Conn, error) {
+			return dialContextOnRoute(ctx, "tcp", s.cfg.Server.String(), route)
 		},
 		func(route selectedRoute, _ error) {
 			if route.ifaceName != "" {
