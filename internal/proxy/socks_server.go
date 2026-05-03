@@ -7,19 +7,24 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
 
 	"github.com/armon/go-socks5"
+	"github.com/elazarl/goproxy"
 	toolLog "github.com/fmotalleb/go-tools/log"
+	"github.com/soheilhy/cmux"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/fmotalleb/bifrost/config"
 )
 
-// SOCKSServer is a SOCKS5 proxy that binds outbound connections to selected interfaces.
-type SOCKSServer struct {
+// MixedProxyServer is a mixed HTTP and SOCKS5 proxy that binds outbound
+// connections to selected interfaces.
+type MixedProxyServer struct {
 	cfg           config.Config
 	selector      *Selector
 	ifaceBindings map[string]ifaceBinding
@@ -28,14 +33,17 @@ type SOCKSServer struct {
 	connID        atomic.Uint64
 }
 
-// NewSOCKSServer constructs a SOCKS5 server from config.
-func NewSOCKSServer(cfg config.Config, telemetry Telemetry) (*SOCKSServer, error) {
+// SOCKSServer is kept as a compatibility alias for the older SOCKS-only API.
+type SOCKSServer = MixedProxyServer
+
+// NewMixedProxyServer constructs a mixed HTTP/SOCKS5 proxy server from config.
+func NewMixedProxyServer(cfg config.Config, telemetry Telemetry) (*MixedProxyServer, error) {
 	runtime, err := prepareRuntimeDependencies(cfg, true, telemetry)
 	if err != nil {
 		return nil, err
 	}
 
-	return &SOCKSServer{
+	return &MixedProxyServer{
 		cfg:           runtime.cfg,
 		selector:      runtime.selector,
 		ifaceBindings: runtime.bindings,
@@ -44,16 +52,81 @@ func NewSOCKSServer(cfg config.Config, telemetry Telemetry) (*SOCKSServer, error
 	}, nil
 }
 
-// Serve starts listening for SOCKS5 clients.
-func (s *SOCKSServer) Serve(ctx context.Context) error {
+// NewSOCKSServer constructs the mixed HTTP/SOCKS5 proxy server using the
+// existing SOCKS command/config surface.
+func NewSOCKSServer(cfg config.Config, telemetry Telemetry) (*SOCKSServer, error) {
+	return NewMixedProxyServer(cfg, telemetry)
+}
+
+// Serve starts listening for mixed HTTP and SOCKS5 clients.
+func (s *MixedProxyServer) Serve(ctx context.Context) error {
 	logger := toolLog.Of(ctx)
 	if !s.cfg.Socks.Listen.IsValid() {
 		return errors.New("socks.listen must be a valid address:port")
 	}
 
+	socksServer, err := s.buildSOCKS5Server(ctx)
+	if err != nil {
+		return err
+	}
+	httpServer := &http.Server{
+		Handler: s.buildHTTPProxyHandler(ctx),
+	}
+
+	var listenConfig net.ListenConfig
+	listener, err := listenConfig.Listen(ctx, "tcp", s.cfg.Socks.Listen.String())
+	if err != nil {
+		return fmt.Errorf("listen on %s: %w", s.cfg.Socks.Listen, err)
+	}
+	defer listener.Close()
+
+	logger.Info("mixed proxy listening",
+		zap.String("listen", s.cfg.Socks.Listen.String()),
+		zap.Strings("protocols", []string{"http", "socks5"}),
+	)
+
+	go func() {
+		<-ctx.Done()
+		_ = httpServer.Close()
+		_ = listener.Close()
+	}()
+
+	mux := cmux.New(listener)
+	httpListener := mux.Match(cmux.HTTP1Fast())
+	socksListener := mux.Match(cmux.Any())
+
+	group := new(errgroup.Group)
+	group.Go(func() error {
+		err := httpServer.Serve(httpListener)
+		if isExpectedProxyServerClose(err, ctx) {
+			return nil
+		}
+		return fmt.Errorf("serve http proxy listener: %w", err)
+	})
+	group.Go(func() error {
+		err := socksServer.Serve(socksListener)
+		if isExpectedProxyServerClose(err, ctx) {
+			return nil
+		}
+		return fmt.Errorf("serve socks5 proxy listener: %w", err)
+	})
+	group.Go(func() error {
+		err := mux.Serve()
+		if isExpectedProxyServerClose(err, ctx) {
+			return nil
+		}
+		return fmt.Errorf("serve mixed proxy listener: %w", err)
+	})
+
+	return group.Wait()
+}
+
+func (s *MixedProxyServer) buildSOCKS5Server(ctx context.Context) (*socks5.Server, error) {
+	logger := toolLog.Of(ctx)
+
 	serverCfg := &socks5.Config{
 		Logger: log.New(socks5DebugLogWriter{logger: logger}, "", 0),
-		Dial:   s.buildDialer(ctx),
+		Dial:   s.buildDialer(ctx, "socks5"),
 	}
 
 	username := strings.TrimSpace(s.cfg.Socks.Username)
@@ -71,31 +144,32 @@ func (s *SOCKSServer) Serve(ctx context.Context) error {
 
 	server, err := socks5.New(serverCfg)
 	if err != nil {
-		return fmt.Errorf("create socks5 server: %w", err)
+		return nil, fmt.Errorf("create socks5 server: %w", err)
 	}
 
-	var listenConfig net.ListenConfig
-	listener, err := listenConfig.Listen(ctx, "tcp", s.cfg.Socks.Listen.String())
-	if err != nil {
-		return fmt.Errorf("listen on %s: %w", s.cfg.Socks.Listen, err)
-	}
-	defer listener.Close()
-
-	logger.Info("socks server listening", zap.String("listen", s.cfg.Socks.Listen.String()))
-
-	go func() {
-		<-ctx.Done()
-		_ = listener.Close()
-	}()
-
-	err = server.Serve(listener)
-	if err == nil || errors.Is(err, net.ErrClosed) || ctx.Err() != nil {
-		return nil
-	}
-	return fmt.Errorf("serve socks listener: %w", err)
+	return server, nil
 }
 
-type monitoredSOCKSTargetConn struct {
+func (s *MixedProxyServer) buildHTTPProxyHandler(ctx context.Context) http.Handler {
+	proxyServer := goproxy.NewProxyHttpServer()
+	proxyServer.Verbose = false
+	proxyServer.Tr = &http.Transport{
+		Proxy:             nil,
+		DialContext:       s.buildDialer(ctx, "http"),
+		DisableKeepAlives: true,
+	}
+	proxyServer.ConnectDialWithReq = func(req *http.Request, network, addr string) (net.Conn, error) {
+		dialCtx := ctx
+		if req != nil {
+			dialCtx = req.Context()
+		}
+		return s.dialTarget(dialCtx, network, addr, "http_connect")
+	}
+
+	return proxyServer
+}
+
+type monitoredTargetConn struct {
 	net.Conn
 	ifaceName string
 	selector  *Selector
@@ -105,7 +179,7 @@ type monitoredSOCKSTargetConn struct {
 	rxBytes   atomic.Int64
 }
 
-func (c *monitoredSOCKSTargetConn) Write(p []byte) (int, error) {
+func (c *monitoredTargetConn) Write(p []byte) (int, error) {
 	n, err := c.Conn.Write(p)
 	if n > 0 {
 		c.txBytes.Add(int64(n))
@@ -114,7 +188,7 @@ func (c *monitoredSOCKSTargetConn) Write(p []byte) (int, error) {
 	return n, err
 }
 
-func (c *monitoredSOCKSTargetConn) Read(p []byte) (int, error) {
+func (c *monitoredTargetConn) Read(p []byte) (int, error) {
 	n, err := c.Conn.Read(p)
 	if n > 0 {
 		c.rxBytes.Add(int64(n))
@@ -123,7 +197,7 @@ func (c *monitoredSOCKSTargetConn) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func (c *monitoredSOCKSTargetConn) CloseWrite() error {
+func (c *monitoredTargetConn) CloseWrite() error {
 	closeWriter, ok := c.Conn.(interface{ CloseWrite() error })
 	if !ok {
 		return c.Conn.Close()
@@ -131,13 +205,13 @@ func (c *monitoredSOCKSTargetConn) CloseWrite() error {
 	return closeWriter.CloseWrite()
 }
 
-func (c *monitoredSOCKSTargetConn) Close() error {
+func (c *monitoredTargetConn) Close() error {
 	err := c.Conn.Close()
 	c.release(true)
 	return err
 }
 
-func (c *monitoredSOCKSTargetConn) release(success bool) {
+func (c *monitoredTargetConn) release(success bool) {
 	c.released.Do(func() {
 		c.selector.Release(c.ifaceName)
 		c.telemetry.AddActiveConnections(c.ifaceName, -1)
@@ -145,7 +219,7 @@ func (c *monitoredSOCKSTargetConn) release(success bool) {
 	})
 }
 
-func (s *SOCKSServer) selectDialRoute(addr string) (selectedRoute, error) {
+func (s *MixedProxyServer) selectDialRoute(addr string) (selectedRoute, error) {
 	route, err := selectBindRoute(
 		s.selector,
 		s.ifaceBindings,
@@ -165,52 +239,78 @@ func (s *SOCKSServer) selectDialRoute(addr string) (selectedRoute, error) {
 	return route, nil
 }
 
-func (s *SOCKSServer) buildDialer(serverCtx context.Context) func(context.Context, string, string) (net.Conn, error) {
-	logger := toolLog.Of(serverCtx)
-
+func (s *MixedProxyServer) buildDialer(
+	serverCtx context.Context,
+	protocol string,
+) func(context.Context, string, string) (net.Conn, error) {
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
-		id := s.connID.Add(1)
-		route, targetConn, err := dialWithFailover(
-			ctx,
-			s.selector,
-			s.ifaceBindings,
-			s.ipCache,
-			func(binding ifaceBinding) bool {
-				if binding.sourceIP != nil {
-					return true
-				}
-				return prefersIPv4Dial(addr)
-			},
-			failoverAttempts(s.cfg.FailoverAttempts, len(s.ifaceBindings)),
-			func(ctx context.Context, route selectedRoute) (net.Conn, error) {
-				return dialContextOnRoute(ctx, network, addr, route)
-			},
-			func(route selectedRoute, _ error) {
-				if route.ifaceName != "" {
-					s.telemetry.ObserveConnection(route.ifaceName, false, 0, 0)
-				}
-			},
-		)
-		if err != nil {
-			return nil, err
+		dialCtx := ctx
+		if dialCtx == nil {
+			dialCtx = serverCtx
 		}
-
-		logger.Debug("socks connected target via interface",
-			zap.Uint64("connection_id", id),
-			zap.String("target", addr),
-			zap.String("iface", route.ifaceName),
-			zap.Int("iface_index", route.binding.index),
-			zap.String("bind_ip", route.bindIP.String()),
-		)
-		s.telemetry.AddActiveConnections(route.ifaceName, 1)
-
-		return &monitoredSOCKSTargetConn{
-			Conn:      targetConn,
-			ifaceName: route.ifaceName,
-			selector:  s.selector,
-			telemetry: s.telemetry,
-		}, nil
+		return s.dialTarget(dialCtx, network, addr, protocol)
 	}
+}
+
+func (s *MixedProxyServer) dialTarget(
+	ctx context.Context,
+	network, addr, protocol string,
+) (net.Conn, error) {
+	logger := toolLog.Of(ctx)
+	id := s.connID.Add(1)
+
+	route, targetConn, err := dialWithFailover(
+		ctx,
+		s.selector,
+		s.ifaceBindings,
+		s.ipCache,
+		func(binding ifaceBinding) bool {
+			if binding.sourceIP != nil {
+				return true
+			}
+			return prefersIPv4Dial(addr)
+		},
+		failoverAttempts(s.cfg.FailoverAttempts, len(s.ifaceBindings)),
+		func(ctx context.Context, route selectedRoute) (net.Conn, error) {
+			return dialContextOnRoute(ctx, network, addr, route)
+		},
+		func(route selectedRoute, _ error) {
+			if route.ifaceName != "" {
+				s.telemetry.ObserveConnection(route.ifaceName, false, 0, 0)
+			}
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	logger.Debug("proxy connected target via interface",
+		zap.Uint64("connection_id", id),
+		zap.String("protocol", protocol),
+		zap.String("target", addr),
+		zap.String("iface", route.ifaceName),
+		zap.Int("iface_index", route.binding.index),
+		zap.String("bind_ip", route.bindIP.String()),
+	)
+	s.telemetry.AddActiveConnections(route.ifaceName, 1)
+
+	return &monitoredTargetConn{
+		Conn:      targetConn,
+		ifaceName: route.ifaceName,
+		selector:  s.selector,
+		telemetry: s.telemetry,
+	}, nil
+}
+
+func isExpectedProxyServerClose(err error, ctx context.Context) bool {
+	if err == nil || ctx.Err() != nil {
+		return true
+	}
+	if errors.Is(err, net.ErrClosed) || errors.Is(err, http.ErrServerClosed) {
+		return true
+	}
+
+	return strings.Contains(err.Error(), "use of closed network connection")
 }
 
 func prefersIPv4Dial(addr string) bool {

@@ -21,7 +21,7 @@ Bifrost allows you to distribute outbound TCP connections across multiple networ
 
 * Combine LAN + WiFi + Multiple USB tethering
 * Maximize download throughput from a single server
-* Maximize internet throughput using a socks proxy
+* Maximize internet throughput using an HTTP or SOCKS proxy
 * Increase parallel connection limits
 * Control traffic distribution per interface
 * Work around restrictive routing policies
@@ -59,9 +59,9 @@ metrics: 0.0.0.0:3000
 failover_attempts: 2
 
 socks:
-  # optional socks5 listen address for `bifrost socks`
+  # optional mixed HTTP/SOCKS5 listen address for `bifrost socks`
   # listen: 127.0.0.1:1080
-  # optional socks5 auth (used by `bifrost socks`)
+  # optional SOCKS5 auth (used by `bifrost socks`)
   # username: myuser
   # password: mypass
 
@@ -85,7 +85,7 @@ ifaces:
 * server: upstream target address
 * metrics: optional metrics/dashboard listener; when set, exposes `/metrics`, `/api/snapshot`, and `/`
 * failover_attempts: outbound dial attempts per request; `0` uses built-in default (`2`)
-* socks.listen: optional SOCKS5 listen address for `bifrost socks`
+* socks.listen: optional mixed HTTP/SOCKS5 listen address for `bifrost socks`
 * socks.username / socks.password: optional SOCKS5 username/password auth; both must be set together
 * cache.ttl: TTL for interface IP lookup cache (for example: `30s`, `5m`, `0s`)
 * cache.prefetch: when `true`, resolve interface IPs at startup and keep them permanently (no per-connection lookup)
@@ -126,7 +126,7 @@ Exported Prometheus metrics:
 
 ## Example
 
-1. Start a socks5 server on your own server without a limited bandwidth,
+1. Start a proxy-compatible service on your own server without a limited bandwidth,
 
 2. Run Bifrost:
 
@@ -137,9 +137,9 @@ bifrost --config config.yaml
 Then connect clients to `127.0.0.1:8080`
 Traffic will be distributed across eth0 and eth1 according to weights.
 
-## SOCKS5 Mode
+## Proxy Mode
 
-You can run Bifrost as a local SOCKS5 proxy that ignores the `server` target and routes each CONNECT request through selected interfaces.
+You can run Bifrost as a local mixed HTTP/SOCKS5 proxy that ignores the `server` target and routes each outbound connection through selected interfaces.
 
 Run:
 
@@ -147,8 +147,8 @@ Run:
 bifrost socks --config config.yaml --socks 127.0.0.1:1080
 ```
 
-Then configure your client to use SOCKS5 on the SOCKS listen address (default `127.0.0.1:1080`).
-Each outbound destination requested via SOCKS is distributed across configured interfaces using the same weighted scheduler.
+Then configure your client to use either HTTP proxy or SOCKS5 on the proxy listen address (default `127.0.0.1:1080`).
+Each outbound destination requested via HTTP or SOCKS5 is distributed across configured interfaces using the same weighted scheduler.
 
 To require SOCKS5 authentication, set both:
 

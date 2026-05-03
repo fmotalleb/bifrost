@@ -11,13 +11,16 @@ tool (
 
 require (
 	github.com/armon/go-socks5 v0.0.0-20160902184237-e75332964ef5
+	github.com/elazarl/goproxy v1.7.2
 	github.com/fmotalleb/go-tools v0.1.72
 	github.com/go-playground/validator/v10 v10.30.2
 	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/prometheus/client_golang v1.23.2
+	github.com/soheilhy/cmux v0.1.5
 	github.com/spf13/cobra v1.10.2
 	go.uber.org/zap v1.27.1
 	golang.org/x/sync v0.20.0
+	golang.org/x/sys v0.42.0
 )
 
 require (
@@ -511,7 +514,6 @@ require (
 	golang.org/x/mod v0.34.0 // indirect
 	golang.org/x/net v0.52.0 // indirect
 	golang.org/x/oauth2 v0.34.0 // indirect
-	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260311193753-579e4da9a98c // indirect
 	golang.org/x/term v0.41.0 // indirect
 	golang.org/x/text v0.35.0 // indirect

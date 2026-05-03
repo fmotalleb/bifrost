@@ -17,7 +17,7 @@ const defaultSOCKSListen = "127.0.0.1:1080"
 
 var socksCmd = &cobra.Command{
 	Use:   "socks",
-	Short: "Run a SOCKS5 proxy that distributes outbound connections across interfaces",
+	Short: "Run a mixed HTTP/SOCKS5 proxy that distributes outbound connections across interfaces",
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		ctx, err := commandContext()
 		if err != nil {
@@ -60,9 +60,9 @@ var socksCmd = &cobra.Command{
 					return err
 				}
 
-				server, serverErr := proxy.NewSOCKSServer(cfg, telemetry)
+				server, serverErr := proxy.NewMixedProxyServer(cfg, telemetry)
 				if serverErr != nil {
-					return fmt.Errorf("create socks server: %w", serverErr)
+					return fmt.Errorf("create mixed proxy server: %w", serverErr)
 				}
 
 				return server.Serve(ctx)
@@ -78,6 +78,6 @@ func init() {
 	socksCmd.Flags().String(
 		"socks",
 		"",
-		"SOCKS5 listen address (host:port)",
+		"Mixed HTTP/SOCKS5 listen address (host:port)",
 	)
 }
