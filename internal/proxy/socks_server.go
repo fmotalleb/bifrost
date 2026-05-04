@@ -15,6 +15,7 @@ import (
 	"github.com/armon/go-socks5"
 	"github.com/elazarl/goproxy"
 	toolLog "github.com/fmotalleb/go-tools/log"
+	"github.com/google/uuid"
 	"github.com/soheilhy/cmux"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -30,7 +31,6 @@ type MixedProxyServer struct {
 	ifaceBindings map[string]ifaceBinding
 	ipCache       *IPCache
 	telemetry     Telemetry
-	connID        atomic.Uint64
 }
 
 // SOCKSServer is kept as a compatibility alias for the older SOCKS-only API.
@@ -163,7 +163,7 @@ func (s *MixedProxyServer) buildHTTPProxyHandler(ctx context.Context) http.Handl
 		if req != nil {
 			dialCtx = req.Context()
 		}
-		return s.dialTarget(dialCtx, network, addr, "http_connect")
+		return s.dialTarget(dialCtx, network, addr, "http_connect", "")
 	}
 
 	return proxyServer
@@ -230,6 +230,8 @@ func (s *MixedProxyServer) selectDialRoute(addr string) (selectedRoute, error) {
 			}
 			return prefersIPv4Dial(addr)
 		},
+		nil,
+		"",
 	)
 	if err != nil {
 		s.telemetry.ObserveConnection(route.ifaceName, false, 0, 0)
@@ -248,16 +250,35 @@ func (s *MixedProxyServer) buildDialer(
 		if dialCtx == nil {
 			dialCtx = serverCtx
 		}
-		return s.dialTarget(dialCtx, network, addr, protocol)
+		connectionID := uuid.NewString()
+		connLogger := toolLog.Of(dialCtx).With(
+			zap.String("connection_id", connectionID),
+			zap.String("protocol", protocol),
+			zap.String("network", network),
+			zap.String("target", addr),
+		)
+		dialCtx = toolLog.WithLogger(dialCtx, connLogger)
+		connLogger.Debug("client request initiated")
+		return s.dialTarget(dialCtx, network, addr, protocol, connectionID)
 	}
 }
 
 func (s *MixedProxyServer) dialTarget(
 	ctx context.Context,
-	network, addr, protocol string,
+	network, addr, protocol, connectionID string,
 ) (net.Conn, error) {
 	logger := toolLog.Of(ctx)
-	id := s.connID.Add(1)
+	if connectionID == "" {
+		connectionID = uuid.NewString()
+		logger = logger.With(
+			zap.String("connection_id", connectionID),
+			zap.String("protocol", protocol),
+			zap.String("network", network),
+			zap.String("target", addr),
+		)
+		ctx = toolLog.WithLogger(ctx, logger)
+	}
+	logger.Debug("connection lifecycle started")
 
 	route, targetConn, err := dialWithFailover(
 		ctx,
@@ -279,15 +300,14 @@ func (s *MixedProxyServer) dialTarget(
 				s.telemetry.ObserveConnection(route.ifaceName, false, 0, 0)
 			}
 		},
+		logger,
+		connectionID,
 	)
 	if err != nil {
 		return nil, err
 	}
 
 	logger.Debug("proxy connected target via interface",
-		zap.Uint64("connection_id", id),
-		zap.String("protocol", protocol),
-		zap.String("target", addr),
 		zap.String("iface", route.ifaceName),
 		zap.Int("iface_index", route.binding.index),
 		zap.String("bind_ip", route.bindIP.String()),

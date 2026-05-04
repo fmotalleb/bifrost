@@ -61,6 +61,8 @@ func TestDialWithFailoverSuccessOnSecondAttempt(t *testing.T) {
 				failCount++
 			}
 		},
+		nil,
+		"",
 	)
 	if err != nil {
 		t.Fatalf("dialWithFailover returned error: %v", err)
@@ -98,6 +100,8 @@ func TestDialWithFailoverExhausted(t *testing.T) {
 				failCount++
 			}
 		},
+		nil,
+		"",
 	)
 	if err == nil {
 		t.Fatal("expected error when all attempts fail")

@@ -47,6 +47,8 @@ func selectReverseProxyRouteForBenchmark(s *Server, preferIPv4 bool) (string, er
 		s.ifaceBindings,
 		s.ipCache,
 		func(_ ifaceBinding) bool { return preferIPv4 },
+		nil,
+		"",
 	)
 	if err != nil {
 		return "", err

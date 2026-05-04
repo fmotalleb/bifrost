@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"sync/atomic"
 
+	"github.com/google/uuid"
 	"github.com/fmotalleb/go-tools/log"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -28,7 +28,6 @@ type Server struct {
 	ifaceBindings map[string]ifaceBinding
 	ipCache       *IPCache
 	telemetry     Telemetry
-	connID        atomic.Uint64
 }
 
 // NewServer constructs a proxy server from config.
@@ -139,14 +138,22 @@ func (s *Server) Serve(ctx context.Context) error {
 			continue
 		}
 
-		id := s.connID.Add(1)
-		go s.handleConnection(ctx, id, clientConn)
+		id := uuid.NewString()
+		connLogger := logger.With(
+			zap.String("connection_id", id),
+			zap.String("client", clientConn.RemoteAddr().String()),
+			zap.String("upstream", s.cfg.Server.String()),
+		)
+		connCtx := log.WithLogger(ctx, connLogger)
+		connLogger.Debug("client connection accepted")
+		go s.handleConnection(connCtx, id, clientConn)
 	}
 }
 
-func (s *Server) handleConnection(ctx context.Context, id uint64, clientConn net.Conn) {
+func (s *Server) handleConnection(ctx context.Context, id string, clientConn net.Conn) {
 	logger := log.Of(ctx)
 	defer clientConn.Close()
+	logger.Debug("connection handling started")
 
 	route, upstreamConn, err := dialWithFailover(
 		ctx,
@@ -163,9 +170,11 @@ func (s *Server) handleConnection(ctx context.Context, id uint64, clientConn net
 				s.telemetry.ObserveConnection(route.ifaceName, false, 0, 0)
 			}
 		},
+		logger,
+		id,
 	)
 	if err != nil {
-		logger.Warn("failed to dial upstream route", zap.Uint64("connection_id", id), zap.Error(err))
+		logger.Warn("failed to dial upstream route", zap.Error(err))
 		return
 	}
 	defer s.selector.Release(route.ifaceName)
@@ -183,12 +192,9 @@ func (s *Server) handleConnection(ctx context.Context, id uint64, clientConn net
 	success = true
 
 	logger.Info("accepted connection",
-		zap.Uint64("connection_id", id),
-		zap.String("client", clientConn.RemoteAddr().String()),
 		zap.String("iface", route.ifaceName),
 		zap.Int("iface_index", route.binding.index),
 		zap.String("bind_ip", route.bindIP.String()),
-		zap.String("upstream", s.cfg.Server.String()),
 	)
 
 	stats, proxyErr := pipeBothWays(clientConn, upstreamConn, func(direction string, bytes int64) {
@@ -198,9 +204,6 @@ func (s *Server) handleConnection(ctx context.Context, id uint64, clientConn net
 	rxBytes = stats.upstreamToClient
 	if proxyErr != nil {
 		fields := []zap.Field{
-			zap.Uint64("connection_id", id),
-			zap.String("client", clientConn.RemoteAddr().String()),
-			zap.String("upstream", s.cfg.Server.String()),
 			zap.Error(proxyErr),
 		}
 		if isHotPathConnectionError(proxyErr) {
