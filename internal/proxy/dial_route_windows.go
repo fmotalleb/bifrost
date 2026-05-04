@@ -16,7 +16,7 @@ const (
 	ipv6UnicastIf = 31
 )
 
-func configureDialerInterfacePinning(dialer *net.Dialer, ifaceIndex int, bindIP net.IP) error {
+func configureDialerInterfacePinning(dialer *net.Dialer, _ string, ifaceIndex int, bindIP net.IP) error {
 	if dialer == nil {
 		return nil
 	}
