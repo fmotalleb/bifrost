@@ -51,13 +51,13 @@ type IfaceSnapshot struct {
 
 // Snapshot is a point-in-time metrics summary used by the dashboard.
 type Snapshot struct {
-	GeneratedAt             time.Time       `json:"generated_at"`
-	TotalSuccess            uint64          `json:"total_success"`
-	TotalFailed             uint64          `json:"total_failed"`
-	TotalTXBytes            uint64          `json:"total_tx_bytes"`
-	TotalRXBytes            uint64          `json:"total_rx_bytes"`
-	TotalActiveConnections  int64           `json:"total_active_connections"`
-	Ifaces                  []IfaceSnapshot `json:"ifaces"`
+	GeneratedAt            time.Time       `json:"generated_at"`
+	TotalSuccess           uint64          `json:"total_success"`
+	TotalFailed            uint64          `json:"total_failed"`
+	TotalTXBytes           uint64          `json:"total_tx_bytes"`
+	TotalRXBytes           uint64          `json:"total_rx_bytes"`
+	TotalActiveConnections int64           `json:"total_active_connections"`
+	Ifaces                 []IfaceSnapshot `json:"ifaces"`
 }
 
 // Recorder records proxy telemetry and exports Prometheus metrics.

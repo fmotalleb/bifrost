@@ -7,8 +7,8 @@ import (
 	"io"
 	"net"
 
-	"github.com/google/uuid"
 	"github.com/fmotalleb/go-tools/log"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 
