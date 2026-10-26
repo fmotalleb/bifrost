@@ -12,7 +12,7 @@ Bifrost is a Go TCP reverse proxy and mixed HTTP/SOCKS5 proxy with weighted netw
 
 ## Build, Test, and Development Commands
 
-Use Go 1.26 or newer, as specified in `go.mod`. Adapt `config.yaml.example` to your local interfaces and upstream before running.
+Use Go 1.27 or newer, as specified in `go.mod`. Adapt `config.yaml.example` to your local interfaces and upstream before running.
 
 - `go run . --config config.yaml`: run the TCP proxy.
 - `go run . socks --config config.yaml --socks 127.0.0.1:1080`: run the mixed proxy.
