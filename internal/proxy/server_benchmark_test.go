@@ -25,11 +25,11 @@ func benchmarkReverseProxyServer(ip1, ip2, ip3, ip4 string) *Server {
 
 	cache := &IPCache{
 		prefetch: true,
-		entries: map[int]ipCacheEntry{
-			1: {ip: net.ParseIP(ip1)},
-			2: {ip: net.ParseIP(ip2)},
-			3: {ip: net.ParseIP(ip3)},
-			4: {ip: net.ParseIP(ip4)},
+		entries: map[ipCacheKey]ipCacheEntry{
+			{index: 1, preferIPv4: true}: {ip: net.ParseIP(ip1)},
+			{index: 2, preferIPv4: true}: {ip: net.ParseIP(ip2)},
+			{index: 3, preferIPv4: true}: {ip: net.ParseIP(ip3)},
+			{index: 4, preferIPv4: true}: {ip: net.ParseIP(ip4)},
 		},
 	}
 

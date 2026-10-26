@@ -41,13 +41,11 @@ func resolveBindIPFromInterface(iface *net.Interface, interfaceName string, pref
 	if matchedFamily != nil {
 		return matchedFamily, nil
 	}
-
-	fallback := pickAnyAddress(addrs)
-	if fallback != nil {
-		return fallback, nil
+	family := "IPv6"
+	if preferIPv4 {
+		family = "IPv4"
 	}
-
-	return nil, fmt.Errorf("interface %q has no usable IP address", interfaceName)
+	return nil, fmt.Errorf("interface %q has no usable %s address", interfaceName, family)
 }
 
 func pickAddress(addrs []net.Addr, preferIPv4 bool) net.IP {
@@ -69,21 +67,13 @@ func pickAddress(addrs []net.Addr, preferIPv4 bool) net.IP {
 	return nil
 }
 
-func pickAnyAddress(addrs []net.Addr) net.IP {
+func interfaceHasIP(addrs []net.Addr, target net.IP) bool {
 	for _, addr := range addrs {
-		ip := ipFromAddr(addr)
-		if ip == nil || ip.IsLoopback() || !ip.IsGlobalUnicast() {
-			continue
+		if ip := ipFromAddr(addr); ip != nil && ip.Equal(target) {
+			return true
 		}
-
-		if ip4 := ip.To4(); ip4 != nil {
-			return ip4
-		}
-
-		return ip
 	}
-
-	return nil
+	return false
 }
 
 func ipFromAddr(addr net.Addr) net.IP {

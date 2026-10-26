@@ -23,15 +23,15 @@ func testRouteSelector(t *testing.T) *Selector {
 
 func testRouteBindingsAndCache() (map[string]ifaceBinding, *IPCache) {
 	return map[string]ifaceBinding{
-			"eth0": {name: "eth0", index: 1},
-			"eth1": {name: "eth1", index: 2},
-		}, &IPCache{
-			prefetch: true,
-			entries: map[int]ipCacheEntry{
-				1: {ip: net.ParseIP("10.0.0.1")},
-				2: {ip: net.ParseIP("10.0.0.2")},
-			},
-		}
+		"eth0": {name: "eth0", index: 1},
+		"eth1": {name: "eth1", index: 2},
+	}, &IPCache{
+		prefetch: true,
+		entries: map[ipCacheKey]ipCacheEntry{
+			{index: 1, preferIPv4: true}: {ip: net.ParseIP("10.0.0.1")},
+			{index: 2, preferIPv4: true}: {ip: net.ParseIP("10.0.0.2")},
+		},
+	}
 }
 
 func TestDialWithFailoverSuccessOnSecondAttempt(t *testing.T) {
@@ -77,6 +77,39 @@ func TestDialWithFailoverSuccessOnSecondAttempt(t *testing.T) {
 	}
 	if failCount != 1 {
 		t.Fatalf("fail count = %d, want 1", failCount)
+	}
+}
+
+func TestDialWithFailoverUsesDifferentInterface(t *testing.T) {
+	selector := testRouteSelector(t)
+	bindings, cache := testRouteBindingsAndCache()
+
+	// Keep eth0 occupied so the first attempt selects eth1, then verify that a
+	// failure retries over the other configured route instead of eth1 again.
+	if _, err := selector.Pick(); err != nil {
+		t.Fatalf("occupy first route: %v", err)
+	}
+
+	var attempted []string
+	_, conn, err := dialWithFailover(
+		context.Background(), selector, bindings, cache,
+		func(_ ifaceBinding) bool { return true }, 2,
+		func(_ context.Context, route selectedRoute) (net.Conn, error) {
+			attempted = append(attempted, route.ifaceName)
+			if len(attempted) == 1 {
+				return nil, errors.New("first route failed")
+			}
+			client, server := net.Pipe()
+			_ = server.Close()
+			return client, nil
+		}, nil, nil, "",
+	)
+	if err != nil {
+		t.Fatalf("dialWithFailover returned error: %v", err)
+	}
+	defer conn.Close()
+	if len(attempted) != 2 || attempted[0] == attempted[1] {
+		t.Fatalf("attempted interfaces = %v, want two distinct routes", attempted)
 	}
 }
 

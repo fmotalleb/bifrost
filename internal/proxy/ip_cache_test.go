@@ -38,10 +38,18 @@ func TestGetBindIPUsesSourceIPOverride(t *testing.T) {
 	}
 }
 
+func TestGetBindIPRejectsSourceIPFromWrongFamily(t *testing.T) {
+	cache := &IPCache{}
+	binding := ifaceBinding{name: "eth0", index: 1, sourceIP: net.ParseIP("10.0.0.7")}
+	if _, err := cache.GetBindIP(binding, false); err == nil {
+		t.Fatal("expected IPv4 source address to be rejected for an IPv6 route")
+	}
+}
+
 func TestGetBindIPPrefetchMissingEntry(t *testing.T) {
 	cache := &IPCache{
 		prefetch: true,
-		entries:  map[int]ipCacheEntry{},
+		entries:  map[ipCacheKey]ipCacheEntry{},
 	}
 	_, err := cache.GetBindIP(ifaceBinding{name: "eth0", index: 99}, true)
 	if err == nil {
@@ -54,8 +62,11 @@ func TestGetBindIPPrefetchMissingEntry(t *testing.T) {
 
 func TestGetBindIPTTLUsesCachedEntry(t *testing.T) {
 	cache := &IPCache{
-		ttl:     time.Minute,
-		entries: map[int]ipCacheEntry{2: {ip: net.ParseIP("10.0.0.9"), expiresAt: time.Now().Add(time.Minute)}},
+		ttl: time.Minute,
+		entries: map[ipCacheKey]ipCacheEntry{
+			{index: 2, preferIPv4: true}:  {ip: net.ParseIP("10.0.0.9"), expiresAt: time.Now().Add(time.Minute)},
+			{index: 2, preferIPv4: false}: {ip: net.ParseIP("2001:db8::9"), expiresAt: time.Now().Add(time.Minute)},
+		},
 	}
 	got, err := cache.GetBindIP(ifaceBinding{name: "eth1", index: 2}, true)
 	if err != nil {
@@ -63,5 +74,13 @@ func TestGetBindIPTTLUsesCachedEntry(t *testing.T) {
 	}
 	if got.String() != "10.0.0.9" {
 		t.Fatalf("GetBindIP cached result = %q, want 10.0.0.9", got.String())
+	}
+
+	got, err = cache.GetBindIP(ifaceBinding{name: "eth1", index: 2}, false)
+	if err != nil {
+		t.Fatalf("GetBindIP IPv6 returned error: %v", err)
+	}
+	if got.String() != "2001:db8::9" {
+		t.Fatalf("GetBindIP IPv6 cached result = %q, want 2001:db8::9", got.String())
 	}
 }

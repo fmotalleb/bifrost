@@ -17,15 +17,16 @@ type runtimeDependencies struct {
 func prepareRuntimeDependencies(
 	cfg config.Config,
 	preferIPv4 bool,
+	requirePreferredFamily bool,
 	telemetry Telemetry,
 ) (runtimeDependencies, error) {
-	normalizedIFaces, bindings, err := normalizeConfiguredIFaces(cfg.IFaces, preferIPv4)
+	normalizedIFaces, bindings, err := normalizeConfiguredIFaces(cfg.IFaces, preferIPv4, requirePreferredFamily)
 	if err != nil {
 		return runtimeDependencies{}, fmt.Errorf("normalize interfaces: %w", err)
 	}
 	cfg.IFaces = normalizedIFaces
 
-	cache, err := NewIPCache(cfg.Cache.TTL, cfg.Cache.Prefetch, bindings, preferIPv4)
+	cache, err := NewIPCache(cfg.Cache.TTL, cfg.Cache.Prefetch, bindings, preferIPv4, requirePreferredFamily)
 	if err != nil {
 		return runtimeDependencies{}, fmt.Errorf("create ip cache: %w", err)
 	}

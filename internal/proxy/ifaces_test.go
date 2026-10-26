@@ -32,19 +32,23 @@ func TestPickAddress(t *testing.T) {
 	}
 }
 
-func TestPickAnyAddress(t *testing.T) {
-	addrs := []net.Addr{
-		ipAddr("127.0.0.1"),
-		ipAddr("2001:db8::2"),
-		ipAddr("10.10.10.3"),
+func TestPickAddressDoesNotUseOtherFamily(t *testing.T) {
+	addrs := []net.Addr{ipAddr("2001:db8::2")}
+	if got := pickAddress(addrs, true); got != nil {
+		t.Fatalf("pickAddress(preferIPv4=true) = %q, want nil", got)
 	}
+}
 
-	got := pickAnyAddress(addrs)
-	if got == nil {
-		t.Fatal("pickAnyAddress returned nil")
+func TestInterfaceHasIP(t *testing.T) {
+	addrs := []net.Addr{
+		&net.IPNet{IP: net.ParseIP("10.10.10.3")},
+		ipAddr("2001:db8::2"),
 	}
-	if got.String() != "2001:db8::2" {
-		t.Fatalf("pickAnyAddress returned %q, want %q", got.String(), "2001:db8::2")
+	if !interfaceHasIP(addrs, net.ParseIP("10.10.10.3")) {
+		t.Fatal("interfaceHasIP did not find configured address")
+	}
+	if interfaceHasIP(addrs, net.ParseIP("10.10.10.4")) {
+		t.Fatal("interfaceHasIP matched an address that is not configured")
 	}
 }
 

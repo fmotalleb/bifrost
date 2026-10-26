@@ -38,7 +38,7 @@ type SOCKSServer = MixedProxyServer
 
 // NewMixedProxyServer constructs a mixed HTTP/SOCKS5 proxy server from config.
 func NewMixedProxyServer(cfg config.Config, telemetry Telemetry) (*MixedProxyServer, error) {
-	runtime, err := prepareRuntimeDependencies(cfg, true, telemetry)
+	runtime, err := prepareRuntimeDependencies(cfg, true, false, telemetry)
 	if err != nil {
 		return nil, err
 	}
@@ -224,10 +224,7 @@ func (s *MixedProxyServer) selectDialRoute(addr string) (selectedRoute, error) {
 		s.selector,
 		s.ifaceBindings,
 		s.ipCache,
-		func(binding ifaceBinding) bool {
-			if binding.sourceIP != nil {
-				return true
-			}
+		func(_ ifaceBinding) bool {
 			return prefersIPv4Dial(addr)
 		},
 		nil,
@@ -285,10 +282,7 @@ func (s *MixedProxyServer) dialTarget(
 		s.selector,
 		s.ifaceBindings,
 		s.ipCache,
-		func(binding ifaceBinding) bool {
-			if binding.sourceIP != nil {
-				return true
-			}
+		func(_ ifaceBinding) bool {
 			return prefersIPv4Dial(addr)
 		},
 		failoverAttempts(s.cfg.FailoverAttempts, len(s.ifaceBindings)),

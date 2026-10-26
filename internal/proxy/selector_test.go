@@ -62,6 +62,29 @@ func TestSelectorTieRoundRobin(t *testing.T) {
 	}
 }
 
+func TestSelectorPickExcludingSkipsPreviouslyTriedInterfaces(t *testing.T) {
+	sel, err := NewSelector(map[string]config.Iface{
+		"a": {Weight: 1},
+		"b": {Weight: 1},
+	})
+	if err != nil {
+		t.Fatalf("NewSelector failed: %v", err)
+	}
+
+	first, err := sel.PickExcluding(map[string]struct{}{"a": {}})
+	if err != nil {
+		t.Fatalf("PickExcluding failed: %v", err)
+	}
+	if first != "b" {
+		t.Fatalf("PickExcluding selected %q, want b", first)
+	}
+	sel.Release(first)
+
+	if _, err := sel.PickExcluding(map[string]struct{}{"a": {}, "b": {}}); err == nil {
+		t.Fatal("expected error when all interfaces are excluded")
+	}
+}
+
 func TestCompareLoadRatio(t *testing.T) {
 	if got := compareLoadRatio(1, 2, 1, 1); got >= 0 {
 		t.Fatalf("expected first ratio to be lower, got %d", got)
@@ -71,5 +94,10 @@ func TestCompareLoadRatio(t *testing.T) {
 	}
 	if got := compareLoadRatio(2, 2, 1, 1); got != 0 {
 		t.Fatalf("expected equal ratios, got %d", got)
+	}
+
+	maxInt := int(^uint(0) >> 1)
+	if got := compareLoadRatio(maxInt, maxInt-1, maxInt-1, maxInt); got <= 0 {
+		t.Fatalf("expected large first ratio to be higher without overflow, got %d", got)
 	}
 }

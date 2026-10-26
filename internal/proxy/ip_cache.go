@@ -18,20 +18,25 @@ type ipCacheEntry struct {
 	expiresAt time.Time
 }
 
+type ipCacheKey struct {
+	index      int
+	preferIPv4 bool
+}
+
 // IPCache caches resolved source IPs per interface with optional prefetch mode.
 type IPCache struct {
 	ttl      time.Duration
 	prefetch bool
 	mu       sync.RWMutex
-	entries  map[int]ipCacheEntry
+	entries  map[ipCacheKey]ipCacheEntry
 }
 
 // NewIPCache creates an IP cache and optionally prefetches all interface source IPs.
-func NewIPCache(ttl time.Duration, prefetch bool, bindings map[string]ifaceBinding, preferIPv4 bool) (*IPCache, error) {
+func NewIPCache(ttl time.Duration, prefetch bool, bindings map[string]ifaceBinding, preferIPv4 bool, requirePreferredFamily bool) (*IPCache, error) {
 	cache := &IPCache{
 		ttl:      ttl,
 		prefetch: prefetch,
-		entries:  make(map[int]ipCacheEntry, len(bindings)),
+		entries:  make(map[ipCacheKey]ipCacheEntry, len(bindings)*2),
 	}
 
 	for _, binding := range bindings {
@@ -43,11 +48,21 @@ func NewIPCache(ttl time.Duration, prefetch bool, bindings map[string]ifaceBindi
 			continue
 		}
 
-		resolvedIP, err := ResolveBindIPByIndex(binding.index, preferIPv4)
-		if err != nil {
-			return nil, fmt.Errorf("prefetch bind ip for %q (index=%d): %w", binding.name, binding.index, err)
+		foundFamily := false
+		for _, family := range []bool{preferIPv4, !preferIPv4} {
+			resolvedIP, err := ResolveBindIPByIndex(binding.index, family)
+			if err != nil {
+				if family == preferIPv4 && requirePreferredFamily {
+					return nil, fmt.Errorf("prefetch bind ip for %q (index=%d): %w", binding.name, binding.index, err)
+				}
+				continue
+			}
+			cache.entries[ipCacheKey{index: binding.index, preferIPv4: family}] = ipCacheEntry{ip: cloneIP(resolvedIP)}
+			foundFamily = true
 		}
-		cache.entries[binding.index] = ipCacheEntry{ip: cloneIP(resolvedIP)}
+		if !requirePreferredFamily && !foundFamily {
+			return nil, fmt.Errorf("prefetch bind ip for %q (index=%d): interface has no usable IP address", binding.name, binding.index)
+		}
 	}
 
 	return cache, nil
@@ -56,23 +71,32 @@ func NewIPCache(ttl time.Duration, prefetch bool, bindings map[string]ifaceBindi
 // GetBindIP returns the source IP for a binding using source_ip override, prefetch cache, or TTL cache refresh.
 func (c *IPCache) GetBindIP(binding ifaceBinding, preferIPv4 bool) (net.IP, error) {
 	if binding.sourceIP != nil {
+		isIPv4 := binding.sourceIP.To4() != nil
+		if isIPv4 != preferIPv4 {
+			family := "IPv6"
+			if preferIPv4 {
+				family = "IPv4"
+			}
+			return nil, fmt.Errorf("configured source_ip for %q is not an %s address", binding.name, family)
+		}
 		return cloneIP(binding.sourceIP), nil
 	}
 
 	if c.prefetch {
 		c.mu.RLock()
-		entry, ok := c.entries[binding.index]
+		entry, ok := c.entries[ipCacheKey{index: binding.index, preferIPv4: preferIPv4}]
 		c.mu.RUnlock()
 		if !ok || entry.ip == nil {
-			return nil, fmt.Errorf("prefetched bind ip not found for %q (index=%d)", binding.name, binding.index)
+			return nil, fmt.Errorf("prefetched bind ip not found for %q (index=%d, ipv4=%t)", binding.name, binding.index, preferIPv4)
 		}
 		return cloneIP(entry.ip), nil
 	}
 
 	if c.ttl > 0 {
 		now := time.Now()
+		key := ipCacheKey{index: binding.index, preferIPv4: preferIPv4}
 		c.mu.RLock()
-		entry, ok := c.entries[binding.index]
+		entry, ok := c.entries[key]
 		c.mu.RUnlock()
 		if ok && entry.ip != nil && now.Before(entry.expiresAt) {
 			return cloneIP(entry.ip), nil
@@ -86,7 +110,7 @@ func (c *IPCache) GetBindIP(binding ifaceBinding, preferIPv4 bool) (net.IP, erro
 
 	if c.ttl > 0 {
 		c.mu.Lock()
-		c.entries[binding.index] = ipCacheEntry{
+		c.entries[ipCacheKey{index: binding.index, preferIPv4: preferIPv4}] = ipCacheEntry{
 			ip:        cloneIP(resolvedIP),
 			expiresAt: time.Now().Add(c.ttl),
 		}

@@ -33,7 +33,7 @@ type Server struct {
 // NewServer constructs a proxy server from config.
 func NewServer(cfg config.Config, telemetry Telemetry) (*Server, error) {
 	preferIPv4 := cfg.Server.Addr().Is4()
-	runtime, err := prepareRuntimeDependencies(cfg, preferIPv4, telemetry)
+	runtime, err := prepareRuntimeDependencies(cfg, preferIPv4, true, telemetry)
 	if err != nil {
 		return nil, err
 	}
@@ -50,6 +50,7 @@ func NewServer(cfg config.Config, telemetry Telemetry) (*Server, error) {
 func normalizeConfiguredIFaces(
 	ifaces map[string]config.Iface,
 	preferIPv4 bool,
+	requirePreferredFamily bool,
 ) (map[string]config.Iface, map[string]ifaceBinding, error) {
 	normalized := make(map[string]config.Iface, len(ifaces))
 	bindings := make(map[string]ifaceBinding, len(ifaces))
@@ -67,8 +68,11 @@ func normalizeConfiguredIFaces(
 			)
 		}
 
-		sourceIP := normalizeSourceIP(ifaceCfg.SourceIP, preferIPv4)
-		if ifaceCfg.SourceIP != nil && sourceIP == nil {
+		sourceIP := cloneIP(ifaceCfg.SourceIP)
+		if requirePreferredFamily {
+			sourceIP = normalizeSourceIP(ifaceCfg.SourceIP, preferIPv4)
+		}
+		if requirePreferredFamily && ifaceCfg.SourceIP != nil && sourceIP == nil {
 			family := "IPv6"
 			if preferIPv4 {
 				family = "IPv4"
@@ -79,6 +83,15 @@ func normalizeConfiguredIFaces(
 				ifaceCfg.SourceIP.String(),
 				family,
 			)
+		}
+		if sourceIP != nil {
+			addrs, err := resolvedIface.Addrs()
+			if err != nil {
+				return nil, nil, fmt.Errorf("list addresses for interface %q: %w", resolvedName, err)
+			}
+			if !interfaceHasIP(addrs, sourceIP) {
+				return nil, nil, fmt.Errorf("interface %q does not have configured source_ip %q", configuredName, sourceIP)
+			}
 		}
 
 		ifaceCfg.SourceIP = cloneIP(sourceIP)

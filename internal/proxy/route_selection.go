@@ -30,7 +30,19 @@ func selectBindRoute(
 	logger *zap.Logger,
 	connectionID string,
 ) (selectedRoute, error) {
-	ifaceName, err := selector.Pick()
+	return selectBindRouteExcluding(selector, bindings, cache, preferIPv4, logger, connectionID, nil)
+}
+
+func selectBindRouteExcluding(
+	selector *Selector,
+	bindings map[string]ifaceBinding,
+	cache *IPCache,
+	preferIPv4 func(binding ifaceBinding) bool,
+	logger *zap.Logger,
+	connectionID string,
+	excluded map[string]struct{},
+) (selectedRoute, error) {
+	ifaceName, err := selector.PickExcluding(excluded)
 	if err != nil {
 		return selectedRoute{}, fmt.Errorf("select interface: %w", err)
 	}
@@ -94,13 +106,22 @@ func dialWithFailover(
 	}
 
 	var lastErr error
+	attempted := make(map[string]struct{}, attempts)
 	for attempt := 0; attempt < attempts; attempt++ {
-		route, err := selectBindRoute(selector, bindings, cache, preferIPv4, logger, connectionID)
+		route, err := selectBindRouteExcluding(selector, bindings, cache, preferIPv4, logger, connectionID, attempted)
 		if err != nil {
+			if route.ifaceName == "" {
+				if lastErr != nil {
+					return selectedRoute{}, nil, lastErr
+				}
+				return selectedRoute{}, nil, err
+			}
+			attempted[route.ifaceName] = struct{}{}
 			if onAttemptFailure != nil {
 				onAttemptFailure(route, err)
 			}
-			return selectedRoute{}, nil, err
+			lastErr = fmt.Errorf("select route: %w", err)
+			continue
 		}
 		if logger != nil && logger.Core().Enabled(zap.DebugLevel) {
 			logger.Debug("dial attempt started",
@@ -126,6 +147,7 @@ func dialWithFailover(
 		}
 
 		selector.Release(route.ifaceName)
+		attempted[route.ifaceName] = struct{}{}
 		if logger != nil && logger.Core().Enabled(zap.DebugLevel) {
 			logger.Debug("dial attempt failed",
 				zap.String("connection_id", connectionID),

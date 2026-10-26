@@ -25,11 +25,11 @@ func benchmarkSOCKSServer() *SOCKSServer {
 
 	cache := &IPCache{
 		prefetch: true,
-		entries: map[int]ipCacheEntry{
-			1: {ip: net.ParseIP("10.0.0.1")},
-			2: {ip: net.ParseIP("10.0.0.2")},
-			3: {ip: net.ParseIP("10.0.0.3")},
-			4: {ip: net.ParseIP("10.0.0.4")},
+		entries: map[ipCacheKey]ipCacheEntry{
+			{index: 1, preferIPv4: true}: {ip: net.ParseIP("10.0.0.1")},
+			{index: 2, preferIPv4: true}: {ip: net.ParseIP("10.0.0.2")},
+			{index: 3, preferIPv4: true}: {ip: net.ParseIP("10.0.0.3")},
+			{index: 4, preferIPv4: true}: {ip: net.ParseIP("10.0.0.4")},
 		},
 	}
 
